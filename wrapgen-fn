@@ -1,0 +1,102 @@
+#!/usr/bin/env python
+import sys, json
+fn    = sys.argv[1]
+args  = json.load(sys.stdin)
+N     = len(args)
+names = [x["name"] for x in args]
+types = [x["type"] for x in args]
+
+
+ctype_to_npytype = {
+        'signed char': 'NPY_BYTE' , 
+        'short': 'NPY_SHORT' , 
+        'int': 'NPY_INT' , 
+        'long': 'NPY_LONG' , 
+        'long long': 'NPY_LONGLONG',  
+        'unsigned char': 'NPY_UBYTE' ,
+        'unsigned short': 'NPY_USHORT' ,
+        'unsigned int': 'NPY_UINT' ,
+        'unsigned long': 'NPY_ULONG' ,
+        'unsigned long long': 'NPY_ULONGLONG' ,
+        'float': 'NPY_FLOAT' ,
+        'double': 'NPY_DOUBLE' ,
+        '_Complex float': 'NPY_CFLOAT' ,
+        '_Complex double': 'NPY_CDOUBLE' 
+    }
+
+
+ctype_to_pyfmtstr = {
+    'double':             'd',
+    'float':              'f',
+    'short':              'h',
+    'int':                'i',
+    'long':               'l',
+    'long long':          'L',
+    'unsigned short':     'H',
+    'unsigned int':       'I',
+    'unsigned long':      'k',
+    'unsigned long long': 'K'
+}
+
+fmt_tokens = []
+fmt_argslist = []
+pyvardecls = []
+typechecks = []
+call_args  = []
+
+
+def extracttype(x):
+    return ' '.join([a for a in x.replace('*','').split(' ') if a.strip() not in ['const', 'restrict', 'volatile', 'volatile']])
+
+for i in range(N):
+    n = names[i]
+    t = types[i]
+    is_array = '*' in t
+
+    if not is_array:
+        fmt_tokens.append(ctype_to_pyfmtstr[t])
+        fmt_argslist.append(f"&{n}")
+        pyvardecls.append(f"    {t} {n}" +" = {0};")
+        call_args.append(n)
+    else:
+        npt = ctype_to_npytype[extracttype(t)]
+        fmt_tokens.append("O!")
+        fmt_argslist.append(f"&PyArray_Type,&{n}")
+        pyvardecls.append(f"    PyArrayObject *{n}" +" = NULL;")
+        call_args.append(f"PyArray_DATA({n})")
+        typechecks.append( \
+                f'    if(PyArray_TYPE({n}) != {npt})' + '{' + \
+                f'strncpy(errmsg,"Invalid data type for argument {n} (expected {t})",4095);' + \
+                'PyErr_SetString(PyExc_ValueError, errmsg); return 0; }')
+        typechecks.append( \
+                f'    if(!PyArray_ISCARRAY({n}))' + '{' + \
+                f'strncpy(errmsg,"Argument {n} is not contiguous",4095);' + \
+                'PyErr_SetString(PyExc_ValueError, errmsg); return 0; }')
+
+print(f"""
+PyObject *
+wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)
+""")
+print("""
+{
+    (void) self;
+    char errmsg[4096] = {};
+""")
+print("    static char *kwlist[] = {%s,NULL};" % (',\n\t\t'.join([f'"{a}"' for a in names]),))
+print('\n'.join(pyvardecls))
+fmtstr=''.join(fmt_tokens)
+argsstr=',\n\t\t'.join(fmt_argslist)
+print(f'if(!PyArg_ParseTupleAndKeywords(args, kwds, "{fmtstr}", kwlist, {argsstr} )) return 0;')
+
+print('\n    '.join(typechecks));
+
+print()
+
+print(f"    (void){fn}(" + ', '.join(call_args)  + ");")
+
+print()
+
+print ("""
+    Py_RETURN_NONE;
+}
+""")
