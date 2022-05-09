@@ -27,10 +27,10 @@ clang -c -o /dev/null $EXTRACLANGFLAGS -Xclang -ast-dump=json "$TGTFILE" | jq '
 # Get list of function names that we want to wrap
 TGTFNS=$(
 grep 'WRAPGEN\s*([, \ta-zA-Z0-9_]*)' "$TGTFILE"  \
-	| sed 's/^.*WRAPGEN\s*(\([, \ta-zA-Z0-9_]*\)).*$/\1/g' \
+	| gsed 's/^.*WRAPGEN\s*(\([, \ta-zA-Z0-9_]*\)).*$/\1/g' \
 	| tr ',' '\n'     \
 	| tr -d "\t\r "   \
-	| sed '/^\s*$/d' 
+	| gsed '/^\s*$/d' 
 )
 
 for fn in $TGTFNS
