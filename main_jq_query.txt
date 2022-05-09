@@ -1,7 +1,0 @@
-.inner 
-| map(select(.kind=="FunctionDecl")) 
-| map(select(.loc.expansionLoc?.includedFrom? == null)) 
-| map(select(.loc.includedFrom? == null)) 
-| map({name, type, loc, inner: .inner 
-	| map(select(.kind=="ParmVarDecl") 
-	| { name, type: (.type.desugaredQualType? // .type.qualType), })})
