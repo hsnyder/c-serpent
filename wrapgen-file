@@ -18,7 +18,7 @@ clang -c -o /dev/null $EXTRACLANGFLAGS -Xclang -ast-dump=json "$TGTFILE" | jq '
 	| map(select(.kind=="FunctionDecl")) 
 	| map(select(.loc.expansionLoc?.includedFrom? == null)) 
 	| map(select(.loc.includedFrom? == null)) 
-	| map({name, type, loc, inner: .inner 
+	| map({name, type: (.type.desugaredQualType? // .type.qualType), loc, inner: .inner 
 		| map(select(.kind=="ParmVarDecl") 
 		| { name, type: (.type.desugaredQualType? // .type.qualType), })})
 ' > $TMPFILE_JSON
@@ -33,12 +33,10 @@ grep 'WRAPGEN\s*([, \ta-zA-Z0-9_]*)' "$TGTFILE"  \
 	| gsed '/^\s*$/d' 
 )
 
-cat $TMPFILE_JSON
-
 for fn in $TGTFNS
 do
 	#cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0].type | {type: (.desugaredQualType? // .qualType)} "
-	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0].inner "  | wrapgen-fn $fn 
+	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0]"  | wrapgen-fn $fn 
 done
 
 rm $TMPFILE_JSON
