@@ -51,6 +51,8 @@ pyvardecls = []
 typechecks = []
 call_args  = []
 
+def isstring(t):
+    return t.replace('const', '').replace(' ','') == 'char*'
 
 def extracttype(x):
     return ' '.join([a for a in x.replace('*','').split(' ') if a.strip() not in ['const', 'restrict', 'volatile', 'volatile']])
@@ -58,9 +60,13 @@ def extracttype(x):
 for i in range(N):
     n = names[i]
     t = types[i]
-    is_array = '*' in t
 
-    if not is_array:
+    if isstring(t):
+        fmt_tokens.append("s")
+        fmt_argslist.append(f"&{n}")
+        pyvardecls.append(f"    const char * {n}" +" = 0;")
+        call_args.append(n)
+    elif not '*' in t:
         fmt_tokens.append(ctype_to_pyfmtstr[t])
         fmt_argslist.append(f"&{n}")
         pyvardecls.append(f"    {t} {n}" +" = {0};")
@@ -80,29 +86,27 @@ for i in range(N):
                 f'strncpy(errmsg,"Argument {n} is not contiguous",4095);' + \
                 'PyErr_SetString(PyExc_ValueError, errmsg); return 0; }')
 
-print(f"""
-PyObject *
-wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)
-""")
-print("""
-{
-    (void) self;
-    char errmsg[4096] = {};
-""")
-print("    static char *kwlist[] = {%s,NULL};" % (',\n\t\t'.join([f'"{a}"' for a in names]),))
-print('\n'.join(pyvardecls))
-fmtstr=''.join(fmt_tokens)
-argsstr=',\n\t\t'.join(fmt_argslist)
-print(f'if(!PyArg_ParseTupleAndKeywords(args, kwds, "{fmtstr}", kwlist, {argsstr} )) return 0;')
+print(f"PyObject * wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)")
+print( "{")
+print( "    (void) self;")
+if N > 0:
+    fmtstr=''.join(fmt_tokens)
+    argsstr=',\n\t\t'.join(fmt_argslist)
+    print("    char errmsg[4096] = {};")
+    print("    static char *kwlist[] = {%s,NULL};" % (',\n\t\t'.join([f'"{a}"' for a in names]),))
+    print('\n'.join(pyvardecls))
+    print(f'    if(!PyArg_ParseTupleAndKeywords(args, kwds, "{fmtstr}", kwlist, {argsstr} )) return 0;')
 
-print('\n    '.join(typechecks));
+    print('\n    '.join(typechecks));
+else:
+    print('    (void) args;')
+    print('    (void) kwds;')
 
 print()
-
 if retntype == "void":
     print(f"    (void){fn}(" + ', '.join(call_args)  + ");")
     print( "    Py_RETURN_NONE; ")
-elif retntype.replace('const', '').replace(' ','') == 'char*':
+elif isstring(retntype):
     print(f"    {retntype} rtn = {fn}(" + ', '.join(call_args) + ");")
     print( '    return Py_BuildValue("s", rtn);')
 elif '*' in retntype:
