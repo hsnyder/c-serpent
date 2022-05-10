@@ -33,8 +33,11 @@ grep 'WRAPGEN\s*([, \ta-zA-Z0-9_]*)' "$TGTFILE"  \
 	| gsed '/^\s*$/d' 
 )
 
+cat $TMPFILE_JSON
+
 for fn in $TGTFNS
 do
+	#cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0].type | {type: (.desugaredQualType? // .qualType)} "
 	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0].inner "  | wrapgen-fn $fn 
 done
 
