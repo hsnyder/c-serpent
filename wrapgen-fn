@@ -102,6 +102,9 @@ print()
 if retntype == "void":
     print(f"    (void){fn}(" + ', '.join(call_args)  + ");")
     print( "    Py_RETURN_NONE; ")
+elif retntype.replace('const', '').replace(' ','') == 'char*':
+    print(f"    {retntype} rtn = {fn}(" + ', '.join(call_args) + ");")
+    print( '    return Py_BuildValue("s", rtn);')
 elif '*' in retntype:
     print(f"    void* rtn = {fn}(" + ', '.join(call_args) + ");")
     print( "    return PyLong_FromVoidPtr(rtn);")
