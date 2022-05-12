@@ -1,4 +1,4 @@
-// WRAPGEN(mytestfn, tf2, tf3, tf4)
+// WRAPGEN(mytestfn, tf2, tf3, tf4, asdf)
 
 long mytestfn(int x, long y)
 {
@@ -9,6 +9,12 @@ long mytestfn(int x, long y)
 void * tf2(void)
 {
 	return 0;
+}
+
+
+void asdf(void * x) {
+	int * y = x;
+	*y = 0;
 }
 
 

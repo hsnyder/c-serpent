@@ -53,9 +53,11 @@ call_args  = []
 
 def isstring(t):
     return t.replace('const', '').replace(' ','') == 'char*'
+def isvoidptr(t):
+    return t.replace('const', '').replace(' ','') == 'void*'
 
 def extracttype(x):
-    return ' '.join([a for a in x.replace('*','').split(' ') if a.strip() not in ['const', 'restrict', 'volatile', 'volatile']])
+    return ' '.join([a.strip() for a in x.replace('*','').split(' ') if a.strip() not in ['const', 'restrict', 'volatile', 'volatile']]).strip()
 
 for i in range(N):
     n = names[i]
@@ -66,6 +68,13 @@ for i in range(N):
         fmt_argslist.append(f"&{n}")
         pyvardecls.append(f"    const char * {n}" +" = 0;")
         call_args.append(n)
+    elif isvoidptr(t):
+        fmt_tokens.append("L")
+        fmt_argslist.append(f"&{n}_ll")
+        pyvardecls.append(f"    long long {n}_ll" +" = 0;")
+        pyvardecls.append(f"    void* {n}" +" = 0;")
+        call_args.append(n)
+        typechecks.append(f"    memcpy(&{n}, &{n}_ll, sizeof({n}));")
     elif not '*' in t:
         fmt_tokens.append(ctype_to_pyfmtstr[t])
         fmt_argslist.append(f"&{n}")
@@ -86,6 +95,8 @@ for i in range(N):
                 f'strncpy(errmsg,"Argument {n} is not contiguous",4095);' + \
                 'PyErr_SetString(PyExc_ValueError, errmsg); return 0; }')
 
+c_args_list = ', '.join(types)
+print(f"{retntype} {fn} ({c_args_list});")
 print(f"PyObject * wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)")
 print( "{")
 print( "    (void) self;")
@@ -104,16 +115,27 @@ else:
 
 print()
 if retntype == "void":
+    print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    (void){fn}(" + ', '.join(call_args)  + ");")
+    print( "    Py_END_ALLOW_THREADS;")
     print( "    Py_RETURN_NONE; ")
 elif isstring(retntype):
-    print(f"    {retntype} rtn = {fn}(" + ', '.join(call_args) + ");")
+    print(f"    {retntype} rtn = {0};")
+    print( "    Py_BEGIN_ALLOW_THREADS;")
+    print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
+    print( "    Py_END_ALLOW_THREADS;")
     print( '    return Py_BuildValue("s", rtn);')
 elif '*' in retntype:
-    print(f"    void* rtn = {fn}(" + ', '.join(call_args) + ");")
+    print(f"    void* rtn = 0;")
+    print( "    Py_BEGIN_ALLOW_THREADS;")
+    print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
+    print( "    Py_END_ALLOW_THREADS;")
     print( "    return PyLong_FromVoidPtr(rtn);")
 else:
-    print(f"    {retntype} rtn = {fn}(" + ', '.join(call_args) + ");")
+    print(f"    {retntype} rtn = {0};")
+    print( "    Py_BEGIN_ALLOW_THREADS;")
+    print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
+    print( "    Py_END_ALLOW_THREADS;")
     print( '    return Py_BuildValue("' + ctype_to_pyfmtstr[retntype] + '", rtn);')
 
 print("} ")
