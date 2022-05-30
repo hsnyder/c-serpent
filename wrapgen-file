@@ -24,55 +24,6 @@ clang -c -o /dev/null $EXTRACLANGFLAGS -Xclang -ast-dump=json "$TGTFILE" | jq '
 		| { name, type: (.type.desugaredQualType? // .type.qualType), })})
 ' > $TMPFILE_JSON
 
-echo '
-
-#define C2NPY(type) _Generic((type){0},    \
-	signed char:        NPY_BYTE,      \
-	short:              NPY_SHORT,     \
-	int:                NPY_INT,       \
-	long:               NPY_LONG,      \
-	long long:          NPY_LONGLONG,  \
-	unsigned char:      NPY_UBYTE,     \
-	unsigned short:     NPY_USHORT,    \
-	unsigned int:       NPY_UINT,      \
-	unsigned long:      NPY_ULONG,     \
-	unsigned long long: NPY_ULONGLONG, \
-	float:              NPY_FLOAT,     \
-	double:             NPY_DOUBLE,    \
-	_Complex float:     NPY_CFLOAT,    \
-	_Complex double:    NPY_CDOUBLE    \
-	)
-
-#define C2PYFMT(type) _Generic((type){0},  \
-	double:             "d",  \
-	float:              "f",  \
-	short:              "h",  \
-	int:                "i",  \
-	long:               "l",  \
-	long long:          "L",  \
-	unsigned short:     "H",  \
-	unsigned int:       "I",  \
-	unsigned long:      "k",  \
-	unsigned long long: "K"   \
-	)
-
-static inline char *
-#if defined(__clang__) || defined (__GNUC__)
-__attribute__ ((format (printf, 2, 3)))
-#endif
-fmt_str (int n, char *restrict buffer, const char *restrict fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buffer, n, fmt, ap);
-	va_end(ap);
-	return buffer;
-}
-
-#define NFORMAT(N, fmt, ...) fmt_str(N, (char[N]){0}, (fmt), __VA_ARGS__)
-
-'
-
 # Get list of function names that we want to wrap
 TGTFNS=$(
 grep 'WRAPGEN\s*([, \ta-zA-Z0-9_]*)' "$TGTFILE"  \
@@ -87,9 +38,5 @@ do
 	#echo "Wrapping $fn..."
 	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0]"  | wrapgen-fn $fn 
 done
-
-echo "#undef C2NPY"
-echo "#undef C2PYFMT"
-echo "#undef NFORMAT"
 rm $TMPFILE_JSON
  
