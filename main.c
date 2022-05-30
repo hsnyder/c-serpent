@@ -39,6 +39,7 @@ parse_fnname(char ** x, char * fn, size_t fnsz)
 
 	if (**x == ',') {
 		(*x)++;
+		*x = skipst(*x);
 		return 1;
 	}
 
