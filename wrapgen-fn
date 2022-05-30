@@ -7,25 +7,6 @@ N     = len(args)
 names = [x["name"] for x in args]
 types = [x["type"] for x in args]
 
-
-ctype_to_npytype = {
-        'signed char': 'NPY_BYTE' , 
-        'short': 'NPY_SHORT' , 
-        'int': 'NPY_INT' , 
-        'long': 'NPY_LONG' , 
-        'long long': 'NPY_LONGLONG',  
-        'unsigned char': 'NPY_UBYTE' ,
-        'unsigned short': 'NPY_USHORT' ,
-        'unsigned int': 'NPY_UINT' ,
-        'unsigned long': 'NPY_ULONG' ,
-        'unsigned long long': 'NPY_ULONGLONG' ,
-        'float': 'NPY_FLOAT' ,
-        'double': 'NPY_DOUBLE' ,
-        '_Complex float': 'NPY_CFLOAT' ,
-        '_Complex double': 'NPY_CDOUBLE' 
-    }
-
-
 ctype_to_pyfmtstr = {
     'double':             'd',
     'float':              'f',
@@ -64,25 +45,25 @@ for i in range(N):
     t = types[i]
 
     if isstring(t):
-        fmt_tokens.append("s")
+        fmt_tokens.append('"s"')
         fmt_argslist.append(f"&{n}")
         pyvardecls.append(f"    const char * {n}" +" = 0;")
         call_args.append(n)
     elif isvoidptr(t):
-        fmt_tokens.append("L")
+        fmt_tokens.append('"L"')
         fmt_argslist.append(f"&{n}_ll")
         pyvardecls.append(f"    long long {n}_ll" +" = 0;")
         pyvardecls.append(f"    void* {n}" +" = 0;")
         call_args.append(n)
         typechecks.append(f"    memcpy(&{n}, &{n}_ll, sizeof({n}));")
     elif not '*' in t:
-        fmt_tokens.append(ctype_to_pyfmtstr[t])
+        fmt_tokens.append(f"C2PYFMT({t})")
         fmt_argslist.append(f"&{n}")
         pyvardecls.append(f"    {t} {n}" +" = {0};")
         call_args.append(n)
     else:
-        npt = ctype_to_npytype[extracttype(t)]
-        fmt_tokens.append("O!")
+        npt = "C2NPY(" + extracttype(t) +")"
+        fmt_tokens.append('"O!"')
         fmt_argslist.append(f"&PyArray_Type,&{n}")
         pyvardecls.append(f"    PyArrayObject *{n}" +" = NULL;")
         call_args.append(f"PyArray_DATA({n})")
@@ -101,12 +82,13 @@ print(f"PyObject * wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)")
 print( "{")
 print( "    (void) self;")
 if N > 0:
-    fmtstr=''.join(fmt_tokens)
+    py_fmt_str_syms = ','.join(fmt_tokens)
+    py_fmt_str_fmt  = '%s' * N
     argsstr=',\n\t\t'.join(fmt_argslist)
     print("    char errmsg[4096] = {};")
     print("    static char *kwlist[] = {%s,NULL};" % (',\n\t\t'.join([f'"{a}"' for a in names]),))
     print('\n'.join(pyvardecls))
-    print(f'    if(!PyArg_ParseTupleAndKeywords(args, kwds, "{fmtstr}", kwlist, {argsstr} )) return 0;')
+    print(f'    if(!PyArg_ParseTupleAndKeywords(args, kwds, NFORMAT(1024,"{py_fmt_str_fmt}",{py_fmt_str_syms}), kwlist, {argsstr} )) return 0;')
 
     print('\n    '.join(typechecks));
 else:
@@ -136,6 +118,6 @@ else:
     print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
     print( "    Py_END_ALLOW_THREADS;")
-    print( '    return Py_BuildValue("' + ctype_to_pyfmtstr[retntype] + '", rtn);')
+    print(f'    return Py_BuildValue(NFORMAT(8,"%s",C2PYFMT({retntype})), rtn);')
 
 print("} ")
