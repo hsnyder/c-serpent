@@ -1,2 +1,4 @@
 deploy*.sh
-wrapgen-tools
+push*.sh
+preamble.c
+wrapgen

@@ -1,2 +1,3 @@
 #!/bin/sh
-cc -I../useful-c/ -g -Wall -Wextra -Wswitch-enum main.c -o wrapgen-tools
+xxd -i preamble > preamble.c
+cc -I../useful-c/ -g -Wall -Wextra -Wswitch-enum wrapgen.c -o wrapgen

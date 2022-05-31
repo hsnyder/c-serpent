@@ -25,18 +25,12 @@ clang -c -o /dev/null $EXTRACLANGFLAGS -Xclang -ast-dump=json "$TGTFILE" | jq '
 ' > $TMPFILE_JSON
 
 # Get list of function names that we want to wrap
-TGTFNS=$(
-grep 'WRAPGEN\s*([, \ta-zA-Z0-9_]*)' "$TGTFILE"  \
-	| gsed 's/^.*WRAPGEN\s*(\([, \ta-zA-Z0-9_]*\)).*$/\1/g' \
-	| tr ',' '\n'     \
-	| tr -d "\t\r "   \
-	| gsed '/^\s*$/d' 
-)
+TGTFNS=$(wrapgen -cn "$TGTFILE")
 
 for fn in $TGTFNS
 do
 	#echo "Wrapping $fn..."
-	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0]"  | wrapgen-fn $fn 
+	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0]"  | wrapgen-fn $(wrapgen -c $TGTFILE | awk "\$1 ~ /$fn/{print;exit;}")
 done
 rm $TMPFILE_JSON
  

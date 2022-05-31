@@ -7,19 +7,14 @@ N     = len(args)
 names = [x["name"] for x in args]
 types = [x["type"] for x in args]
 
-ctype_to_pyfmtstr = {
-    'double':             'd',
-    'float':              'f',
-    'short':              'h',
-    'int':                'i',
-    'long':               'l',
-    'long long':          'L',
-    'unsigned short':     'H',
-    'unsigned int':       'I',
-    'unsigned long':      'k',
-    'unsigned long long': 'K'
-}
 
+# see if we have any other arguments..
+exnchk_argno = -1
+for _arg in sys.argv[2:]:
+    if _arg[:2] == '-e':
+        exnchk_argno = int(_arg[2:])
+assert exnchk_argno != 0, 'not implemented'
+assert exnchk_argno <= N, f'asked for error check on argument #{exnchk_argno}, which does not exist for {fn}'
 
 retntype = injson["type"]
 x = retntype.find('(')
@@ -39,6 +34,16 @@ def isvoidptr(t):
 
 def extracttype(x):
     return ' '.join([a.strip() for a in x.replace('*','').split(' ') if a.strip() not in ['const', 'restrict', 'volatile', 'volatile']]).strip()
+
+def insert_exceptionhandling():
+    if exnchk_argno > 0: 
+        exnarg = call_args[exnchk_argno-1]
+        print(f"    const char * _exn = WRAPGEN_ERRCHK({exnarg});")
+        print( "    if(_exn) {")
+        print( "        PyErr_SetString(PyExc_RuntimeError, _exn);")
+        print( "        return 0;")
+        print( "    }")
+
 
 for i in range(N):
     n = names[i]
@@ -100,24 +105,28 @@ if retntype == "void":
     print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    (void){fn}(" + ', '.join(call_args)  + ");")
     print( "    Py_END_ALLOW_THREADS;")
+    insert_exceptionhandling()
     print( "    Py_RETURN_NONE; ")
 elif isstring(retntype):
     print(f"    {retntype} rtn = {0};")
     print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
     print( "    Py_END_ALLOW_THREADS;")
+    insert_exceptionhandling()
     print( '    return Py_BuildValue("s", rtn);')
 elif '*' in retntype:
     print(f"    void* rtn = 0;")
     print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
     print( "    Py_END_ALLOW_THREADS;")
+    insert_exceptionhandling()
     print( "    return PyLong_FromVoidPtr(rtn);")
 else:
     print(f"    {retntype} rtn = {0};")
     print( "    Py_BEGIN_ALLOW_THREADS;")
     print(f"    rtn = {fn}(" + ', '.join(call_args) + ");")
     print( "    Py_END_ALLOW_THREADS;")
+    insert_exceptionhandling()
     print(f'    return Py_BuildValue(NFORMAT(8,"%s",C2PYFMT({retntype})), rtn);')
 
 print("} ")

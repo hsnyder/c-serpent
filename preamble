@@ -1,5 +1,3 @@
-#!/usr/bin/env bash 
-echo '
 #define C2NPY(type) _Generic((type){0},    \
 	signed char:        NPY_BYTE,      \
 	short:              NPY_SHORT,     \
@@ -44,7 +42,3 @@ fmt_str (int n, char *restrict buffer, const char *restrict fmt, ...)
 }
 
 #define NFORMAT(N, fmt, ...) fmt_str(N, (char[N]){0}, (fmt), __VA_ARGS__)
-
-'
-
-

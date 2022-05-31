@@ -12,14 +12,25 @@
 #define MIN(a,b) ((a) > (b) ? (b) : (a))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
+#include "preamble.c"
+
+static inline int 
+is_alnum_uscore(char x) 
+{
+	return isalnum(x) || x == '_';
+}
+
 int
 parse_argument(char ** x, char * arg, size_t argsz)
 {
 	// TODO guard against arguments longer than argsz
 	if(**x == '-') {
-		(*x)++;
-		for (unsigned i = 0; i < argsz-1 && (isalnum(**x) || **x == '_'); i++, (*x)++)
+		unsigned i = 0;
+		do {
 			arg[i] = **x;
+			(*x)++;
+			i++;
+		} while (i < argsz && is_alnum_uscore(**x));
 
 		*x = skipst(*x);
 		return 1;
@@ -60,7 +71,7 @@ int expect_char(char ** x, char exp, const char * firstchar)
 }
 
 void 
-parse_comment(char * comment) 
+parse_comment(char * comment, int parse_args) 
 {
 	const char * key = "WRAPGEN";
 	const size_t len = strlen(key);
@@ -96,8 +107,9 @@ parse_comment(char * comment)
 	
 		for (int i = 0; i < nfns; i++) {
 			printf("%s ", fns[i]);
-			for (int j = 0; j < nargs; j++) 
-				printf("%s ", args[j]);
+			if (parse_args)
+				for (int j = 0; j < nargs; j++) 
+					printf("%s ", args[j]);
 			printf("\n");
 		}
 
@@ -107,70 +119,8 @@ parse_comment(char * comment)
 }
 
 void
-parse_wrapgen_commands (char * t)
+parse_wrapgen_commands (const char * filename, int parse_args)
 {
-	char *x = t;
-
-	while((x = strchr(x, '/'))) {
-		x++;
-
-		if(*x == '/') {
-			// start single line comment
-			x++;
-			char * comment = strsepstr(&x,"\n");
-			parse_comment(comment);
-		} else if (*x == '*') {
-			// start multiline comment
-			x++;
-			char * comment = strsepstr(&x,"*/");
-			parse_comment(comment);
-		}
-	}
-}
-
-_Noreturn void
-usage(const char * progname)
-{
-	const char * msg = 
-		"filename\n"
-		"\tfilename\tFile to operate on\n";
-	die("usage: %s %s", progname, msg);
-}
-
-int 
-main(int argc, char ** argv)
-{
-	(void) argc; 
-
-	const char * filename = 0;
-	const char * progname = argv[0];
-
-	// parse arguments
-	{
-		int option; 
-		struct optparse options;
-		optparse_init(&options, argv);
-		while ((option = optparse(&options, "p")) != -1) {
-			switch(option) {
-			case 'p':
-				break;
-			/*
-			case 'm':
-				if (1 != sscanf(options.optarg, "%i", &mno)) 
-					die("Couldn't understand memory type number");
-				break;
-				*/
-			case '?':
-				die("%s",options.errmsg);
-				break;
-			}
-		}
-		if(!(filename = optparse_arg(&options)))
-			usage(progname);
-	}
-
-
-
 	char * filedata = 0;
 	// read specified file. 
 	{
@@ -188,7 +138,112 @@ main(int argc, char ** argv)
 		fclose(f);
 	}
 
-	parse_wrapgen_commands(filedata);
+	char *x = filedata;
+
+	while((x = strchr(x, '/'))) {
+		x++;
+
+		if(*x == '/') {
+			// start single line comment
+			x++;
+			char * comment = strsepstr(&x,"\n");
+			parse_comment(comment, parse_args);
+		} else if (*x == '*') {
+			// start multiline comment
+			x++;
+			char * comment = strsepstr(&x,"*/");
+			parse_comment(comment, parse_args);
+		}
+	}
 
 	free(filedata);
+}
+
+_Noreturn void
+usage(const char * progname)
+{
+	const char * msg = 
+		"[-cp] filename [extra...]\n"
+		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
+		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -p)\n"
+		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
+		"\tfilename\tFile to operate on.\n"
+		"\textra   \tExtra flags to pass to clang.\n";
+	die("usage: %s %s", progname, msg);
+}
+
+enum mode {
+	FORK = 0,
+	PARSE_COMMANDS,
+	PREAMBLE,
+};
+
+int 
+main(int argc, char ** argv)
+{
+	const char * progname = argv[0];
+	const char * filename = 0;
+	const char * extra_args[100] = {};
+	int narg = 0;
+
+	enum mode m = FORK;
+	int parse_args = 1;
+
+	if(argc > 100) die("too many arguments");
+
+	// parse arguments
+	{
+		int option; 
+		struct optparse options;
+		optparse_init(&options, argv);
+		options.permute = 0;
+		while ((option = optparse(&options, "cpn")) != -1) {
+			switch(option) {
+			case 'c':
+				m = PARSE_COMMANDS;
+				break;
+			case 'p':
+				m = PREAMBLE;
+				break;
+			case 'n':
+				parse_args = 0;
+				break;
+			/*
+			case 'm':
+				if (1 != sscanf(options.optarg, "%i", &mno)) 
+					die("Couldn't understand memory type number");
+				break;
+				*/
+			case '?':
+				die("%s",options.errmsg);
+				break;
+			}
+		}
+
+		if(!(filename = optparse_arg(&options)) && m != PREAMBLE)
+			usage(progname);
+
+		while((extra_args[narg] = optparse_arg(&options))) 
+			narg++;
+	}
+
+	switch (m) {
+	
+	case FORK:
+		die("fork not implemented");
+		break;
+
+	case PARSE_COMMANDS:
+		parse_wrapgen_commands(filename, parse_args);
+		break;
+
+	case PREAMBLE:
+		for (unsigned i = 0; i < preamble_len; i++) 
+			fputc(preamble[i], stdout);
+		break;
+
+	default:
+		die("bug: invalid mode: %i", (int) m);
+		break;
+	} 
 }
