@@ -17,7 +17,7 @@ parse_argument(char ** x, char * arg, size_t argsz)
 {
 	// TODO guard against arguments longer than argsz
 	if(**x == '-') {
-
+		(*x)++;
 		for (unsigned i = 0; i < argsz-1 && (isalnum(**x) || **x == '_'); i++, (*x)++)
 			arg[i] = **x;
 

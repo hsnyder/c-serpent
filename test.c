@@ -1,4 +1,4 @@
-// WRAPGEN(mytestfn, tf2, tf3, tf4, asdf)
+// WRAPGEN(mytestfn, tf2, tf3)
 
 long mytestfn(int x, long y)
 {
@@ -26,3 +26,8 @@ const char * tf3(int x)
 const char * tf4(const char *mystrstr) {
 	return mystrstr;
 }
+
+/*
+ *
+ * WRAPGEN -e1 (asdf , tf4)
+ */
