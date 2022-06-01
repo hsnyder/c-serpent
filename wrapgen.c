@@ -13,6 +13,7 @@
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
 #include "preamble.c"
+#include "example.c"
 
 static inline int 
 is_alnum_uscore(char x) 
@@ -167,6 +168,7 @@ usage(const char * progname)
 		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
 		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -p)\n"
 		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
+		"\t-e      \tEmit example module definition and then exit.\n"
 		"\tfilename\tFile to operate on.\n"
 		"\textra   \tExtra flags to pass to clang.\n";
 	die("usage: %s %s", progname, msg);
@@ -176,6 +178,7 @@ enum mode {
 	FORK = 0,
 	PARSE_COMMANDS,
 	PREAMBLE,
+	EXAMPLE,
 };
 
 int 
@@ -197,13 +200,16 @@ main(int argc, char ** argv)
 		struct optparse options;
 		optparse_init(&options, argv);
 		options.permute = 0;
-		while ((option = optparse(&options, "cpn")) != -1) {
+		while ((option = optparse(&options, "cpne")) != -1) {
 			switch(option) {
 			case 'c':
 				m = PARSE_COMMANDS;
 				break;
 			case 'p':
 				m = PREAMBLE;
+				break;
+			case 'e':
+				m = EXAMPLE;
 				break;
 			case 'n':
 				parse_args = 0;
@@ -220,7 +226,9 @@ main(int argc, char ** argv)
 			}
 		}
 
-		if(!(filename = optparse_arg(&options)) && m != PREAMBLE)
+		if(!(filename = optparse_arg(&options)) 
+				&& m != PREAMBLE
+				&& m != EXAMPLE )
 			usage(progname);
 
 		while((extra_args[narg] = optparse_arg(&options))) 
@@ -240,6 +248,11 @@ main(int argc, char ** argv)
 	case PREAMBLE:
 		for (unsigned i = 0; i < preamble_len; i++) 
 			fputc(preamble[i], stdout);
+		break;
+
+	case EXAMPLE:
+		for (unsigned i = 0; i < example_len; i++) 
+			fputc(example[i], stdout);
 		break;
 
 	default:

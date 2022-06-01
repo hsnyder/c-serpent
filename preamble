@@ -1,3 +1,9 @@
+#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
+#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API
+
+#include <Python.h>
+#include <numpy/arrayobject.h>
+
 #define C2NPY(type) _Generic((type){0},    \
 	signed char:        NPY_BYTE,      \
 	short:              NPY_SHORT,     \
@@ -28,6 +34,8 @@
 	unsigned long long: "K"   \
 	)
 
+#include <stdarg.h>
+#include <stdio.h>
 static inline char *
 #if defined(__clang__) || defined (__GNUC__)
 __attribute__ ((format (printf, 3, 4)))
