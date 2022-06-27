@@ -30,7 +30,7 @@ TGTFNS=$(wrapgen -cn "$TGTFILE")
 for fn in $TGTFNS
 do
 	#echo "Wrapping $fn..."
-	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[0]"  | wrapgen-fn $(wrapgen -c $TGTFILE | awk "\$1 ~ /$fn/{print;exit;}")
+	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[-1]"  | wrapgen-fn $(wrapgen -c $TGTFILE | awk "\$1 ~ /$fn/{print;exit;}")
 done
 rm $TMPFILE_JSON
  

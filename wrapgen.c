@@ -21,7 +21,7 @@ is_alnum_uscore(char x)
 	return isalnum(x) || x == '_';
 }
 
-int
+static int
 parse_argument(char ** x, char * arg, size_t argsz)
 {
 	// TODO guard against arguments longer than argsz
@@ -39,7 +39,7 @@ parse_argument(char ** x, char * arg, size_t argsz)
 	return 0;
 }
 
-int
+static int
 parse_fnname(char ** x, char * fn, size_t fnsz)
 {
 	// TODO guard against function names larger than fnsz
@@ -58,7 +58,8 @@ parse_fnname(char ** x, char * fn, size_t fnsz)
 	return 0;
 }
 
-int expect_char(char ** x, char exp, const char * firstchar) 
+static int 
+expect_char(char ** x, char exp, const char * firstchar) 
 {
 	if (**x != exp) {
 		char context[80] = {};
@@ -71,7 +72,7 @@ int expect_char(char ** x, char exp, const char * firstchar)
 	return 1;
 }
 
-void 
+static void 
 parse_comment(char * comment, int parse_args) 
 {
 	const char * key = "WRAPGEN";
@@ -119,7 +120,7 @@ parse_comment(char * comment, int parse_args)
 	
 }
 
-void
+static void
 parse_wrapgen_commands (const char * filename, int parse_args)
 {
 	char * filedata = 0;
@@ -160,13 +161,13 @@ parse_wrapgen_commands (const char * filename, int parse_args)
 	free(filedata);
 }
 
-_Noreturn void
+static _Noreturn void
 usage(const char * progname)
 {
 	const char * msg = 
 		"[-cp] filename [extra...]\n"
 		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
-		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -p)\n"
+		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -c)\n"
 		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
 		"\t-e      \tEmit example module definition and then exit.\n"
 		"\tfilename\tFile to operate on.\n"
@@ -214,12 +215,6 @@ main(int argc, char ** argv)
 			case 'n':
 				parse_args = 0;
 				break;
-			/*
-			case 'm':
-				if (1 != sscanf(options.optarg, "%i", &mno)) 
-					die("Couldn't understand memory type number");
-				break;
-				*/
 			case '?':
 				die("%s",options.errmsg);
 				break;
