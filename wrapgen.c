@@ -1,5 +1,8 @@
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #define STRINGFNS_IMPLEMENTATION
 #include "stringfns.h"
@@ -14,6 +17,8 @@
 
 #include "preamble.c"
 #include "example.c"
+
+#include "pdjson.c"
 
 static inline int 
 is_alnum_uscore(char x) 
@@ -157,6 +162,121 @@ parse_wrapgen_commands (const char * filename, int parse_args)
 	free(filedata);
 }
 
+
+
+void indent(int n)
+{
+	for (int i = 0; i < n * 2; i++)
+		putchar(' ');
+}
+
+void pretty(json_stream *json);
+
+void pretty_array(json_stream *json)
+{
+	printf("[\n");
+	int first = 1;
+	while (json_peek(json) != JSON_ARRAY_END && !json_get_error(json)) {
+		if (!first)
+			printf(",\n");
+		else
+			first = 0;
+		indent(json_get_depth(json));
+		pretty(json);
+	}
+	json_next(json);
+	printf("\n");
+	indent(json_get_depth(json));
+	printf("]");
+}
+
+void pretty_object(json_stream *json)
+{
+	printf("{\n");
+	int first = 1;
+	while (json_peek(json) != JSON_OBJECT_END && !json_get_error(json)) {
+		if (!first)
+			printf(",\n");
+		else
+			first = 0;
+		indent(json_get_depth(json));
+		json_next(json);
+		printf("\"%s\": ", json_get_string(json, NULL));
+		pretty(json);
+	}
+	json_next(json);
+	printf("\n");
+	indent(json_get_depth(json));
+	printf("}");
+}
+
+void pretty(json_stream *json)
+{
+	enum json_type type = json_next(json);
+	switch (type) {
+		case JSON_DONE:
+			return;
+		case JSON_NULL:
+			printf("null");
+			break;
+		case JSON_TRUE:
+			printf("true");
+			break;
+		case JSON_FALSE:
+			printf("false");
+			break;
+		case JSON_NUMBER:
+			printf("%s", json_get_string(json, NULL));
+			break;
+		case JSON_STRING:
+			printf("\"%s\"", json_get_string(json, NULL));
+			break;
+		case JSON_ARRAY:
+			pretty_array(json);
+			break;
+		case JSON_OBJECT:
+			pretty_object(json);
+			break;
+		case JSON_OBJECT_END:
+		case JSON_ARRAY_END:
+			return;
+		case JSON_ERROR:
+			fprintf(stderr, "error: %zu: %s\n",
+					json_get_lineno(json),
+					json_get_error(json));
+			exit(EXIT_FAILURE);
+	}
+}
+
+
+static int
+spawn (int in, int out, char *c[])
+{
+	pid_t p = fork(); 
+	
+	if (!p) {
+
+		// child process
+		if (in != 0) {
+			if (dup2(in, 0) < 0) die("dup2 failed on stdin");
+			close(in);
+		}
+
+		if (out != 1) {
+			if (dup2(out,1) < 0) die("dup2 failed on stdout");
+			close(out);
+		} 
+
+		execvp(c[0], c);
+
+		die("exec failed");
+		
+	} else if (p < 0) die("fork failed");
+
+	return p;
+}
+
+
 static _Noreturn void
 usage(const char * progname)
 {
@@ -229,7 +349,41 @@ main(int argc, char ** argv)
 	switch (m) {
 	
 	case FORK:
-		die("fork not implemented");
+		1==1;
+		char *cmd_bufr[130] = {"clang", "-c", "-o", "/dev/null"};
+		int x = 4;
+		for (int i = 0; i < narg; i++) cmd_bufr[x++] = extra_args[i];
+		cmd_bufr[x++] = "-Xclang";
+		cmd_bufr[x++] = "-ast-dump=json";
+		cmd_bufr[x++] = filename;
+
+		
+		int pi[2] = {-1,-1};
+		int po[2] = {-1,-1};
+
+		pipe(pi);
+		pipe(po);
+
+		pid_t pid = spawn(pi[0],po[1],cmd_bufr);
+
+		close(pi[1]);
+		close(po[1]);
+
+		json_stream js = {};
+		FILE * f = fdopen(po[0], "rb");
+		json_open_stream(&js, f);
+		json_set_streaming(&js,false);
+		pretty(&js);
+		if(json_get_error(&js)) {
+			die("error %zu %s\n", json_get_lineno(&js), json_get_error(&js));
+		}
+		json_close(&js);
+		fclose(f);
+		close(po[0]);
+
+		int status = 0;
+		waitpid(pid, &status, 0);
+
 		break;
 
 	case PARSE_COMMANDS:
