@@ -39,7 +39,7 @@ TGTFNS=$(${0}x -cn "$TGTFILE")
 
 for fn in $TGTFNS
 do
-	>&2 echo "wrapgen: wrapping $fn" 
+	>&2 echo "$0: wrapping $fn" 
 	if [ -z "$DEBUG" ]
 	then
 	cat $TMPFILE_JSON | jq "map(select(.name==\"$fn\")) | .[-1]" |
