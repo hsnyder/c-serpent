@@ -2,4 +2,4 @@ deploy*.sh
 push*.sh
 preamble.c
 example.c
-wrapgen
+wrapgenx
