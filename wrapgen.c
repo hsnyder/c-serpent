@@ -8,6 +8,7 @@
 #include "optparse.h"
 
 #include "die.h"
+#define expect(cond) do{if(!(cond))die("expectation violation: %s", #cond);}while(0)
 
 #define MIN(a,b) ((a) > (b) ? (b) : (a))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
@@ -255,3 +256,5 @@ main(int argc, char ** argv)
 		break;
 	} 
 }
+
+
