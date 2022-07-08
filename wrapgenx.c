@@ -9,6 +9,7 @@
 
 #include "die.h"
 #define expect(cond) do{if(!(cond))die("expectation violation: %s", #cond);}while(0)
+#define expect2(cond, ...) do{if(!(cond))die(__VA_ARGS__);}while(0)
 
 #define MIN(a,b) ((a) > (b) ? (b) : (a))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
@@ -162,74 +163,22 @@ parse_wrapgen_commands (const char * filename, int parse_args)
 	free(filedata);
 }
 
-static _Noreturn void
-usage(const char * progname)
-{
-	const char * msg = 
-		"[-cp] filename [extra...]\n"
-		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
-		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -c)\n"
-		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
-		"\t-e      \tEmit example module definition and then exit.\n"
-		"\tfilename\tFile to operate on.\n"
-		"\textra   \tExtra flags to pass to clang.\n";
-	die("usage: %s %s", progname, msg);
-}
-
-enum mode {
-	FORK = 0,
-	PARSE_COMMANDS,
-	PREAMBLE,
-	EXAMPLE,
-};
-
 int 
-main(int argc, char ** argv)
+main (int argc, char ** argv)
 {
-	const char * progname = argv[0];
-	const char * filename = 0;
-	const char * extra_args[100] = {};
-	int narg = 0;
+	expect2 (argc>1, "No filename supplied");
 
-	enum mode m = FORK;
-	int parse_args = 1;
+	FILE * f = fopen(argv[1],"r");
+	expect2 (f, "Coudln't open %s", argv[1]);
 
-	if(argc > 100) die("too many arguments");
+	static char filecontent[1<<25] = {0};
+	size_t n = fread (filecontent,sizeof(filecontent)-1, f);
+	expect2 (n < sizeof(filecontent)-1, "You really have a code file that's more than 32 MiB? o.O");
 
-	// parse arguments
-	{
-		int option; 
-		struct optparse options;
-		optparse_init(&options, argv);
-		options.permute = 0;
-		while ((option = optparse(&options, "cpne")) != -1) {
-			switch(option) {
-			case 'c':
-				m = PARSE_COMMANDS;
-				break;
-			case 'p':
-				m = PREAMBLE;
-				break;
-			case 'e':
-				m = EXAMPLE;
-				break;
-			case 'n':
-				parse_args = 0;
-				break;
-			case '?':
-				die("%s",options.errmsg);
-				break;
-			}
-		}
+	fclose(f);
 
-		if(!(filename = optparse_arg(&options)) 
-				&& m != PREAMBLE
-				&& m != EXAMPLE )
-			usage(progname);
-
-		while((extra_args[narg] = optparse_arg(&options))) 
-			narg++;
-	}
+	
+	
 
 	switch (m) {
 	
@@ -249,6 +198,10 @@ main(int argc, char ** argv)
 	case EXAMPLE:
 		for (unsigned i = 0; i < example_len; i++) 
 			fputc(example[i], stdout);
+		break;
+
+	case FUNCTION;
+		wrapgen_fn();
 		break;
 
 	default:
