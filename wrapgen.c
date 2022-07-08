@@ -12,6 +12,11 @@
 
 #include "die.h"
 
+#define expect(cond) _expect(cond, #cond)
+static void _expect(int cond, const char * str) {
+	if(!cond) die("exectation violation: %s", %cond);
+}
+
 #define MIN(a,b) ((a) > (b) ? (b) : (a))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
@@ -19,66 +24,57 @@
 #include "example.c"
 
 #include "pdjson.c"
+#include "buf.h"
 
-static inline int 
-is_alnum_uscore(char x) 
-{
-	return isalnum(x) || x == '_';
-}
+/*
+struct {
 
-static int
-parse_argument(char ** x, char * arg, size_t argsz)
-{
-	// TODO guard against arguments longer than argsz
-	if(**x == '-') {
-		unsigned i = 0;
-		do {
-			arg[i] = **x;
-			(*x)++;
-			i++;
-		} while (i < argsz && is_alnum_uscore(**x));
+	size_t sz;
+	size_t used;
+	char   *heap;
 
-		*x = skipst(*x);
-		return 1;
-	}
-	return 0;
-}
+} stringpile = {};
 
-static int
-parse_fnname(char ** x, char * fn, size_t fnsz)
-{
-	// TODO guard against function names larger than fnsz
-	unsigned i = 0;
-	for (i = 0; i < fnsz-1 && (isalnum(**x) || **x == '_'); i++, (*x)++)
-		fn[i] = **x;
+static uint64_t 
+newstr (char * s) {
 
-	*x = skipst(*x);
-
-	if (**x == ',') {
-		(*x)++;
-		*x = skipst(*x);
-		return 1;
+	size_t l = strlen(s);
+	while (stringpile.used + l >= stringpile.sz) {
+		stringpile.sz = MAX(1<<23, 2*stringpile.sz);
+		stringpile.heap = realloc(stringpile.heap, stringpile.sz);
+		if (!stringpile.heap) die("out of memory");
 	}
 
-	return 0;
+	uint64_t s = stringpile.used | (l << 44);
+	return s;
 }
 
-static int 
-expect_char(char ** x, char exp, const char * firstchar) 
-{
-	if (**x != exp) {
-		char context[80] = {};
-		snprintf (context, sizeof(context), "%s", MAX(firstchar, (*x - 40)) );
-		warn("expected '%c', skipping this candidate WRAPGEN directive\n%s\n", exp, context);
-		(*x)++;
-		return 0;
-	}
-	(*x)++;
-	return 1;
+static size_t 
+len (uint64_t s) {
+	return s >> 44;
 }
+
+static size_t
+idx (uint64_t s) {
+	return s & (~(0x00ULL) >> 20);
+}
+
+
+typedef struct {
+
+	int error_arg; // -1 means retval, 0 means none, 1-based ordinal means n-th arg
+
+} wrapgen_opts;
+
+typedef struct {
+} ; 
+*/
+
+char * progname = 0;
+char ** commands = 0;
 
 static void 
-parse_comment(char * comment, int parse_args) 
+parse_comment(char * comment, int print_output) 
 {
 	const char * key = "WRAPGEN";
 	const size_t len = strlen(key);
@@ -97,32 +93,23 @@ parse_comment(char * comment, int parse_args)
 			continue;
 		}
 
-		x += len;
-		x = skipst(x);
-		char args[10][80] = {};
-		int nargs = 0;
-		while (nargs < 10 && parse_argument(&x, args[nargs++], 80));
+		// find the "length" of the occurrence
+		size_t spn = strcspn(x, "\r\n*/"); // technically this means that * and / characters seperately terminate the command, but that's ok
+		char buf[2048] = {};
+		char buf2[4096] = {};
+		memcpy(buf,x + len,MIN(spn,sizeof(buf)-1));
+		snprintf(buf2,sizeof(buf2),"%s -X %s", progname, buf);
 
-		if(!expect_char(&x, '(', comment)) continue;
+		if (print_output) 
+			puts(buf2);
+		buf_push(commands, strdup(buf2));
 
-		char fns[100][80] = {};
-		int nfns = 0;
-		while (nfns < 100 && parse_fnname(&x, fns[nfns++], 80));
-
-		if(!expect_char(&x, ')', comment)) continue;
-	
-		for (int i = 0; i < nfns; i++) {
-			printf("%s ", fns[i]);
-			if (parse_args)
-				for (int j = 0; j < nargs; j++) 
-					printf("%s ", args[j]);
-			printf("\n");
-		}
+		x += spn;
 	}
 }
 
 static void
-parse_wrapgen_commands (const char * filename, int parse_args)
+parse_wrapgen_commands (const char * filename, int print_output)
 {
 	char * filedata = 0;
 	// read specified file. 
@@ -150,12 +137,12 @@ parse_wrapgen_commands (const char * filename, int parse_args)
 			// start single line comment
 			x++;
 			char * comment = strsepstr(&x,"\n");
-			parse_comment(comment, parse_args);
+			parse_comment(comment, print_output);
 		} else if (*x == '*') {
 			// start multiline comment
 			x++;
 			char * comment = strsepstr(&x,"*/");
-			parse_comment(comment, parse_args);
+			parse_comment(comment, print_output);
 		}
 	}
 
@@ -278,35 +265,35 @@ spawn (int in, int out, char *c[])
 
 
 static _Noreturn void
-usage(const char * progname)
+usage(void)
 {
 	const char * msg = 
 		"[-cnpe] filename [extra...]\n"
-		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
-		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -c)\n"
-		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
-		"\t-e      \tEmit example module definition and then exit.\n"
+		"\t-X      \tWrap function (internal use, don't use this directly.\n"
+		"\t-P      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
+		"\t-E      \tEmit example module definition and then exit.\n"
+		"\t-C      \tParse commands and exit (for debugging wrapgen.)\n"
 		"\tfilename\tFile to operate on.\n"
 		"\textra   \tExtra flags to pass to clang.\n";
 	die("usage: %s %s", progname, msg);
 }
 
 enum mode {
-	FORK = 0,
+	NORMAL = 0,
 	PARSE_COMMANDS,
 	PREAMBLE,
 	EXAMPLE,
+	WRAPFN,
 };
 
 int 
 main(int argc, char ** argv)
 {
-	const char * progname = argv[0];
+	progname = argv[0];
 	const char * filename = 0;
 	int narg = 0;
 
-	enum mode m = FORK;
-	int parse_args = 1;
+	enum mode m = NORMAL;
 
 	const char * extra_args[100] = {};
 	if (argc > 100) die("wrapgen doesn't support more than 100 command line arguments");
@@ -317,19 +304,19 @@ main(int argc, char ** argv)
 		struct optparse options;
 		optparse_init(&options, argv);
 		options.permute = 0;
-		while ((option = optparse(&options, "cpne")) != -1) {
+		while ((option = optparse(&options, "XPEC")) != -1) {
 			switch(option) {
-			case 'c':
+			case 'C':
 				m = PARSE_COMMANDS;
 				break;
-			case 'p':
+			case 'X':
+				m = WRAPFN;
+				break;
+			case 'P':
 				m = PREAMBLE;
 				break;
-			case 'e':
+			case 'E':
 				m = EXAMPLE;
-				break;
-			case 'n':
-				parse_args = 0;
 				break;
 			case '?':
 				die("%s",options.errmsg);
@@ -337,22 +324,21 @@ main(int argc, char ** argv)
 			}
 		}
 
-		if(!(filename = optparse_arg(&options)) 
-				&& m != PREAMBLE
-				&& m != EXAMPLE )
-			usage(progname);
-
 		while((extra_args[narg] = optparse_arg(&options))) 
 			narg++;
+
+		filename = extra_args[0];
+		if (narg == 0 && !(m == PREAMBLE || m == EXAMPLE)) usage();
 	}
 
 	switch (m) {
 	
-	case FORK:
-		1==1;
+	case NORMAL:
+		parse_wrapgen_commands(filename, 0);
+
 		char *cmd_bufr[130] = {"clang", "-c", "-o", "/dev/null"};
 		int x = 4;
-		for (int i = 0; i < narg; i++) cmd_bufr[x++] = extra_args[i];
+		for (int i = 1; i < narg; i++) cmd_bufr[x++] = extra_args[i];
 		cmd_bufr[x++] = "-Xclang";
 		cmd_bufr[x++] = "-ast-dump=json";
 		cmd_bufr[x++] = filename;
@@ -384,10 +370,16 @@ main(int argc, char ** argv)
 		int status = 0;
 		waitpid(pid, &status, 0);
 
+		/*
+		for (int i = 0 ; i < buf_size(commands); i++) {
+			printf("%s\n", commands[i]);
+		}
+		*/
+
 		break;
 
 	case PARSE_COMMANDS:
-		parse_wrapgen_commands(filename, parse_args);
+		parse_wrapgen_commands(filename, 1);
 		break;
 
 	case PREAMBLE:
