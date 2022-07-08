@@ -14,70 +14,69 @@
 #define MIN(a,b) ((a) > (b) ? (b) : (a))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
-struct options {
-	int error_arg;
-};
+#include "preamble.c"
+#include "example.c"
 
-const struct options DEFAULT_OPTIONS = {.error_arg = -1};
-
-
-struct task {
-	char *fn_name;
-	struct options opts;
-};
-
-
-#define MAX_TASKS 1000
-static struct task tasks[MAX_TASKS] = {0};
-static int n_tasks = 0;
-
-static void 
-parse_single_command(char * s) 
+static inline int 
+is_alnum_uscore(char x) 
 {
-	static char *tokens[1<<20] = {0};
-	int n = 0;
-
-	char *y = 0;
-	char *x = skipwhitespace(s);
-
-	while ((y = strtok(x," \t"))) {
-
-		if (strlen(y)) tokens[n++] = y;	
-		expect(n < (1<<20));
-		x = 0;
-	}
-
-	struct options o = DEFAULT_OPTIONS;
-
-	int i = 0;
-	for (i = 0; i < n; i++) {
-		if (tokens[i][0] == '-') {
-			
-			switch (tokens[i][1]) {
-			case 'e':
-				o.error_arg = atoi(tokens[i]+2);
-				break;
-			default:
-				die("Invalid wrapgen flag %s", tokens[i]);
-			}
-		}
-		else break;
-	}
-
-	for (; i < n; i++) {
-		struct task t = {
-			.fn_name = tokens[i],
-			.opts = o,
-		};
-
-		tasks[n_tasks++] = t;
-		expect(n_tasks < MAX_TASKS);
-	}
+	return isalnum(x) || x == '_';
 }
 
-static void
-parse_comment(char * comment)
-{ 
+static int
+parse_argument(char ** x, char * arg, size_t argsz)
+{
+	// TODO guard against arguments longer than argsz
+	if(**x == '-') {
+		unsigned i = 0;
+		do {
+			arg[i] = **x;
+			(*x)++;
+			i++;
+		} while (i < argsz && is_alnum_uscore(**x));
+
+		*x = skipst(*x);
+		return 1;
+	}
+	return 0;
+}
+
+static int
+parse_fnname(char ** x, char * fn, size_t fnsz)
+{
+	// TODO guard against function names larger than fnsz
+	unsigned i = 0;
+	for (i = 0; i < fnsz-1 && (isalnum(**x) || **x == '_'); i++, (*x)++)
+		fn[i] = **x;
+
+	*x = skipst(*x);
+
+	if (**x == ',') {
+		(*x)++;
+		*x = skipst(*x);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int 
+expect_char(char ** x, char exp, const char * firstchar) 
+{
+	if (**x != exp) {
+		char context[80] = {};
+		snprintf (context, sizeof(context), "%s", MAX(firstchar, (*x - 40)) );
+		warn("expected '%c', skipping this candidate WRAPGEN directive\n%s\n", exp, context);
+		(*x)++;
+		return 0;
+	}
+	(*x)++;
+	return 1;
+}
+
+static void 
+parse_comment(char * comment, int parse_args) 
+{
 	const char * key = "WRAPGEN";
 	const size_t len = strlen(key);
 	char * x = comment;
@@ -95,19 +94,56 @@ parse_comment(char * comment)
 			continue;
 		}
 
-		// find the "length" of the occurrence
-		size_t spn = strcspn(x, "\r\n*/"); // technically this means that * and / characters seperately terminate the command, but that's ok
-		x[spn] = 0;
-		parse_single_command(x+len);
 
-		x += spn+1;
+		x += len;
+		x = skipst(x);
+		char args[10][80] = {};
+		int nargs = 0;
+		while (nargs < 10 && parse_argument(&x, args[nargs++], 80));
+
+		if(!expect_char(&x, '(', comment)) continue;
+
+		char fns[100][80] = {};
+		int nfns = 0;
+		while (nfns < 100 && parse_fnname(&x, fns[nfns++], 80));
+
+		if(!expect_char(&x, ')', comment)) continue;
+	
+		for (int i = 0; i < nfns; i++) {
+			printf("%s ", fns[i]);
+			if (parse_args)
+				for (int j = 0; j < nargs; j++) 
+					printf("%s ", args[j]);
+			printf("\n");
+		}
+
 	}
+
+	
 }
 
-
 static void
-parse_wrapgen_commands (const char * x)
+parse_wrapgen_commands (const char * filename, int parse_args)
 {
+	char * filedata = 0;
+	// read specified file. 
+	{
+		FILE * f = fopen(filename, "rb");
+		if(!f) die("couldn't open %s", filename);
+		if(fseek(f, 0, SEEK_END))
+			die("couldn't seek to end of %s", filename);
+		const unsigned long sz = ftell(f);
+		rewind(f);
+		filedata = malloc(sz);
+		if(!filedata)
+			die("couldn't allocate %li bytes", sz);
+		if(sz != fread(filedata, 1, sz, f))
+			die("couldn't read entirety of %s", filename);
+		fclose(f);
+	}
+
+	char *x = filedata;
+
 	while((x = strchr(x, '/'))) {
 		x++;
 
@@ -115,55 +151,16 @@ parse_wrapgen_commands (const char * x)
 			// start single line comment
 			x++;
 			char * comment = strsepstr(&x,"\n");
-			parse_comment(comment);
+			parse_comment(comment, parse_args);
 		} else if (*x == '*') {
 			// start multiline comment
 			x++;
 			char * comment = strsepstr(&x,"*/");
-			parse_comment(comment);
+			parse_comment(comment, parse_args);
 		}
 	}
 
-}
-
-static int
-is_on_todo_list(const char * s, task * t)
-{
-	for (int i = 0; i < n_tasks; i++) {
-		if(!strncmp(tasks[i].fn_name, s, strlen(tasks[i].fn_name))) {
-			*t = tasks[i];
-			return 1;
-		}
-	}
-	return 0;
-}
-
-static void
-emit_wrapper (task t, char * sig) 
-{
-	// parse the function signature...
-	char *args[100] = {0};
-	int narg = 0;
-	char *retval = strsepstr(&sig, "(");
-	sig = remove_substr(sig,")");
-	sig = remove_substr(sig,"const");
-	sig = remove_substr(sig,"restrict");
-	sig = remove_substr(sig,"volatile");
-
-	char * tok = 0;
-	while((tok = strsepstr(sig, ","))) {
-		nargs[narg++] = tok;
-		expect(narg < 100);
-	}
-
-	for(int i = 0; i < narg; i++) {
-		remove_substr(args[i], "const");
-		remove_substr(args[i], "restrict");
-		remove_substr(args[i], "volatile");
-	}
-
-
-
+	free(filedata);
 }
 
 int 
@@ -175,28 +172,42 @@ main (int argc, char ** argv)
 	expect2 (f, "Coudln't open %s", argv[1]);
 
 	static char filecontent[1<<25] = {0};
-	size_t n = fread (filecontent,1,sizeof(filecontent)-1, f);
+	size_t n = fread (filecontent,sizeof(filecontent)-1, f);
 	expect2 (n < sizeof(filecontent)-1, "You really have a code file that's more than 32 MiB? o.O");
 
 	fclose(f);
 
-	parse_wrapgen_commands (filecontent);	
+	
+	
 
-	while (1) {
-		char fn  [4096]  = {0};
-		char sig [4096] = {0};
+	switch (m) {
+	
+	case FORK:
+		die("fork not implemented");
+		break;
 
-		int ok = 
-			fgets (fn,  sizeof(fn),  stdin) && 
-			fgets (sig, sizeof(sig), stdin);
+	case PARSE_COMMANDS:
+		parse_wrapgen_commands(filename, parse_args);
+		break;
 
-		if (!ok) break;
+	case PREAMBLE:
+		for (unsigned i = 0; i < preamble_len; i++) 
+			fputc(preamble[i], stdout);
+		break;
 
-		task t;
-		if (is_on_todo_list(fn, &t)) {
-			emit_wrapper(t,sig);
-		}
-	}
+	case EXAMPLE:
+		for (unsigned i = 0; i < example_len; i++) 
+			fputc(example[i], stdout);
+		break;
+
+	case FUNCTION;
+		wrapgen_fn();
+		break;
+
+	default:
+		die("bug: invalid mode: %i", (int) m);
+		break;
+	} 
 }
 
 
