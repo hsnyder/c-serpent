@@ -22,6 +22,7 @@
 	)
 
 #define C2PYFMT(type) _Generic((type){0},  \
+	unsigned char:      "b", \
 	double:             "d",  \
 	float:              "f",  \
 	short:              "h",  \
