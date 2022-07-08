@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -e
+
+# Wrapgen: requires python, bash, jq
+
+TGTFILE="$1"
+if [ -z "$TGTFILE" ] 
+then
+	echo "No target file specified"
+	exit
+fi
+
+EXTRACLANGFLAGS="$2"
+
+TMPF="$(mktemp)"
+
+clang -c -o /dev/null $EXTRACLANGFLAGS -Xclang -ast-dump=json "$TGTFILE" | 
+	jq ' .inner | map(select(.kind=="FunctionDecl")) | map([.name, (.type.desugaredQualType? // .type.qualType)]) ' |
+	awk '$1 !~ /\[|\],*/' | 
+	tr -d '"' | 
+	sed -e 's/,//' -e 's/^ *//' > $TMPF
+
+# Get list of function names that we want to wrap
+TGTFNS=$(wrapgen -cn "$TGTFILE")
+
+for fn in $TGTFNS
+do
+	#echo "Wrapping $fn..."
+	cat $TMPF | wrapgen-fn $(wrapgen -c $TGTFILE | awk "\$1 ~ /$fn/{print;exit;}")
+done
+rm $TMPFILE_JSON
+ 
