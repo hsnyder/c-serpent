@@ -92,6 +92,7 @@ parse_comment(char * comment, int parse_args)
 			continue;
 		}
 
+
 		x += len;
 		x = skipst(x);
 		char args[10][80] = {};
@@ -113,7 +114,10 @@ parse_comment(char * comment, int parse_args)
 					printf("%s ", args[j]);
 			printf("\n");
 		}
+
 	}
+
+	
 }
 
 static void
@@ -161,7 +165,7 @@ static _Noreturn void
 usage(const char * progname)
 {
 	const char * msg = 
-		"[-cnpe] filename [extra...]\n"
+		"[-cp] filename [extra...]\n"
 		"\t-c      \tParse wrapgen commands from souce file and then exit.\n"
 		"\t-n      \tDon't parse wrapgen command arguments (meaningful only with -c)\n"
 		"\t-p      \tEmit preamble (helper macros required for the generated wrappers) and then exit.\n"
@@ -183,13 +187,13 @@ main(int argc, char ** argv)
 {
 	const char * progname = argv[0];
 	const char * filename = 0;
+	const char * extra_args[100] = {};
 	int narg = 0;
 
 	enum mode m = FORK;
 	int parse_args = 1;
 
-	const char * extra_args[100] = {};
-	if (argc > 100) die("wrapgen doesn't support more than 100 command line arguments");
+	if(argc > 100) die("too many arguments");
 
 	// parse arguments
 	{
@@ -244,6 +248,10 @@ main(int argc, char ** argv)
 	case EXAMPLE:
 		for (unsigned i = 0; i < example_len; i++) 
 			fputc(example[i], stdout);
+		break;
+
+	default:
+		die("bug: invalid mode: %i", (int) m);
 		break;
 	} 
 }
