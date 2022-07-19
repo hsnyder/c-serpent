@@ -81,8 +81,6 @@ for i in range(N):
                 f'strncpy(__pyexn_errmsg,"Argument {n} is not contiguous",4095);' + \
                 'PyErr_SetString(PyExc_ValueError, __pyexn_errmsg); return 0; }')
 
-c_args_list = ', '.join(types)
-print(f"{retntype} {fn} ({c_args_list});")
 print(f"PyObject * wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)")
 print( "{")
 print( "    (void) self;")
