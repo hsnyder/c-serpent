@@ -3,10 +3,14 @@ set -e
 
 # Wrapgen: requires python, bash, jq
 DEBUG=""
+WRAPGEN_NOHEADER=""
 while [ "$1" != "" ]; do
 	case $1 in
 		-d )
 			DEBUG="1"
+			;;
+		-noh )
+			WRAPGEN_NOHEADER="1"
 			;;
 		* )
 			break
@@ -14,6 +18,8 @@ while [ "$1" != "" ]; do
 	esac
 	shift
 done
+
+export WRAPGEN_NOHEADER
 
 TGTFILE="$1"
 if [ -z "$TGTFILE" ] 

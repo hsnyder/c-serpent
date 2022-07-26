@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-import sys, json
+import sys, json, os
+output_declaration = os.environ.get('WRAPGEN_NOHEADER','0') == '1'
+
 fn    = sys.argv[1]
 injson  = json.load(sys.stdin)
 args  = injson['inner']
@@ -80,6 +82,10 @@ for i in range(N):
                 f'    if(!PyArray_ISCARRAY({n}))' + '{' + \
                 f'strncpy(__pyexn_errmsg,"Argument {n} is not contiguous",4095);' + \
                 'PyErr_SetString(PyExc_ValueError, __pyexn_errmsg); return 0; }')
+
+if output_declaration:
+    c_args_list = ', '.join(types)
+    print(f"{retntype} {fn} ({c_args_list});")
 
 print(f"PyObject * wrap_{fn} (PyObject *self, PyObject *args, PyObject *kwds)")
 print( "{")
