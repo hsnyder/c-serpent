@@ -94,7 +94,7 @@ if N > 0:
     py_fmt_str_syms = ','.join(fmt_tokens)
     py_fmt_str_fmt  = '%s' * N
     argsstr=',\n\t\t'.join(fmt_argslist)
-    print("    char __pyexn_errmsg[4096] = {};")
+    print("    char __pyexn_errmsg[4096];")
     print("    static char *kwlist[] = {%s,NULL};" % (',\n\t\t'.join([f'"{a}"' for a in names]),))
     print('\n'.join(pyvardecls))
     print(f'    if(!PyArg_ParseTupleAndKeywords(args, kwds, NFORMAT(1024,"{py_fmt_str_fmt}",{py_fmt_str_syms}), kwlist, {argsstr} )) return 0;')
