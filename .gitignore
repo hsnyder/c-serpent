@@ -1,4 +1,3 @@
-push*.sh
-preamble.c
-example.c
-wrapgenx
+*.exe
+a.out
+a.exe
