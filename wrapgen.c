@@ -10,6 +10,13 @@
 #include "stb_c_lexer.h"
 #include "buf.h"
 
+
+/*
+	==========================================================
+		Helper functions
+	==========================================================
+*/
+
 _Noreturn void
 die (const char * fmt, ...)
 {
@@ -65,6 +72,141 @@ typedef struct {
 		const char * fn;
 	} err;
 } wrapgen_options;
+
+
+
+/*
+	==========================================================
+		C99 parsing
+	==========================================================
+*/
+
+void gen(const char * s)
+{
+	abort();
+}
+
+int eat(stb_lexer *lex, int token, const char *keyword)
+{
+	if(lex->token == token) {
+		if(token == CLEX_id) {
+			assert(keyword);
+			if (strcmp(keyword, lex->string) goto error;
+		}
+		return stb_c_lexer_get_token(lex);
+	}
+
+	char saw[100] = {0};
+	char wanted[100] = {0};
+	error: switch (lex->token) {
+		case CLEX_id        : snprintf(saw, sizeof(saw), "identifier %s", lex->string); break;
+		case CLEX_eq        : snprintf(saw, sizeof(saw), "=="); break;
+		case CLEX_noteq     : snprintf(saw, sizeof(saw), "!="); break;
+		case CLEX_lesseq    : snprintf(saw, sizeof(saw), "<="); break;
+		case CLEX_greatereq : snprintf(saw, sizeof(saw), ">="); break;
+		case CLEX_andand    : snprintf(saw, sizeof(saw), "&&"); break;
+		case CLEX_oror      : snprintf(saw, sizeof(saw), "||"); break;
+		case CLEX_shl       : snprintf(saw, sizeof(saw), "<<"); break;
+		case CLEX_shr       : snprintf(saw, sizeof(saw), ">>"); break;
+		case CLEX_plusplus  : snprintf(saw, sizeof(saw), "++"); break;
+		case CLEX_minusminus: snprintf(saw, sizeof(saw), "--"); break;
+		case CLEX_arrow     : snprintf(saw, sizeof(saw), "->"); break;
+		case CLEX_andeq     : snprintf(saw, sizeof(saw), "&="); break;
+		case CLEX_oreq      : snprintf(saw, sizeof(saw), "|="); break;
+		case CLEX_xoreq     : snprintf(saw, sizeof(saw), "^="); break;
+		case CLEX_pluseq    : snprintf(saw, sizeof(saw), "+="); break;
+		case CLEX_minuseq   : snprintf(saw, sizeof(saw), "-="); break;
+		case CLEX_muleq     : snprintf(saw, sizeof(saw), "*="); break;
+		case CLEX_diveq     : snprintf(saw, sizeof(saw), "/="); break;
+		case CLEX_modeq     : snprintf(saw, sizeof(saw), "%%="); break;
+		case CLEX_shleq     : snprintf(saw, sizeof(saw), "<<="); break;
+		case CLEX_shreq     : snprintf(saw, sizeof(saw), ">>="); break;
+		case CLEX_eqarrow   : snprintf(saw, sizeof(saw), "=>"); break;
+		case CLEX_dqstring  : snprintf(saw, sizeof(saw), "double-quoted string \"%s\"", lex->string); break;
+		case CLEX_sqstring  : snprintf(saw, sizeof(saw), "single-quoted string '%s'", lex->string); break;
+		case CLEX_charlit   : snprintf(saw, sizeof(saw), "character literal '%s'", lex->string); break;
+		case CLEX_intlit    : snprintf(saw, sizeof(saw), "integer literal %ld", lex->int_number); break;
+		case CLEX_floatlit  : snprintf(saw, sizeof(saw), "floating point literal %g", lex->real_number); break;
+		default:
+		      if (lex->token >= 0 && lex->token < 256)
+			      snprintf(saw, sizeof(saw), "%c", (int) lex->token);
+		      else {
+			      snprintf(saw, sizeof(saw), "<<<UNKNOWN TOKEN %ld >>>\n", lex->token);
+			      die("");
+		      }
+		      break;
+	}
+
+	switch (token) {
+		case CLEX_id: 
+			if (keyword) 
+				snprintf(wanted, sizeof(wanted), "keyword %s", keyword);
+			else
+				snprintf(wanted, sizeof(wanted), "identifier");
+			break;
+		case CLEX_eq        : snprintf(wanted, sizeof(wanted), "=="); break;
+		case CLEX_noteq     : snprintf(wanted, sizeof(wanted), "!="); break;
+		case CLEX_lesseq    : snprintf(wanted, sizeof(wanted), "<="); break;
+		case CLEX_greatereq : snprintf(wanted, sizeof(wanted), ">="); break;
+		case CLEX_andand    : snprintf(wanted, sizeof(wanted), "&&"); break;
+		case CLEX_oror      : snprintf(wanted, sizeof(wanted), "||"); break;
+		case CLEX_shl       : snprintf(wanted, sizeof(wanted), "<<"); break;
+		case CLEX_shr       : snprintf(wanted, sizeof(wanted), ">>"); break;
+		case CLEX_plusplus  : snprintf(wanted, sizeof(wanted), "++"); break;
+		case CLEX_minusminus: snprintf(wanted, sizeof(wanted), "--"); break;
+		case CLEX_arrow     : snprintf(wanted, sizeof(wanted), "->"); break;
+		case CLEX_andeq     : snprintf(wanted, sizeof(wanted), "&="); break;
+		case CLEX_oreq      : snprintf(wanted, sizeof(wanted), "|="); break;
+		case CLEX_xoreq     : snprintf(wanted, sizeof(wanted), "^="); break;
+		case CLEX_pluseq    : snprintf(wanted, sizeof(wanted), "+="); break;
+		case CLEX_minuseq   : snprintf(wanted, sizeof(wanted), "-="); break;
+		case CLEX_muleq     : snprintf(wanted, sizeof(wanted), "*="); break;
+		case CLEX_diveq     : snprintf(wanted, sizeof(wanted), "/="); break;
+		case CLEX_modeq     : snprintf(wanted, sizeof(wanted), "%%="); break;
+		case CLEX_shleq     : snprintf(wanted, sizeof(wanted), "<<="); break;
+		case CLEX_shreq     : snprintf(wanted, sizeof(wanted), ">>="); break;
+		case CLEX_eqarrow   : snprintf(wanted, sizeof(wanted), "=>"); break;
+		case CLEX_dqstring  : snprintf(wanted, sizeof(wanted), "double-quoted string"); break;
+		case CLEX_sqstring  : snprintf(wanted, sizeof(wanted), "single-quoted string"); break;
+		case CLEX_charlit   : snprintf(wanted, sizeof(wanted), "character literal"); break;
+		case CLEX_intlit    : snprintf(wanted, sizeof(wanted), "integer literal"); break;
+		case CLEX_floatlit  : snprintf(wanted, sizeof(wanted), "floating point literal"); break;
+		default:
+		      if (lex->token >= 0 && lex->token < 256)
+			      snprintf(wanted, sizeof(wanted), "%c", (int) lex->token);
+		      else {
+			      die("invalid argument to 'eat'");
+		      }
+		      break;
+	}
+	
+	stb_lex_location loc = {0};
+	stb_c_lexer_get_location(lex, lex->where_firstchar, &loc);
+	die("Parse error at line %i, character %i: Expected %s, found %s", loc->line_number, loc->line_offset, wanted, saw);
+	return 0;
+}
+
+
+void external_declaration(stb_lexer *lex)
+{
+	
+}
+
+
+void translation_unit(stb_lexer *lex)
+{
+	while (stb_c_lexer_get_token(lex)) {
+		external_declaration(lex);
+	}
+}
+
+
+/*
+	==========================================================
+		Comment parsing, main, etc
+	==========================================================
+*/
+
 
 void 
 wrap_identifier (const char * filetext, const char * identifier, wrapgen_options opts)
