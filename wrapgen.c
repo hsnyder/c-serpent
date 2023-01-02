@@ -1,3 +1,7 @@
+/*
+Credit to the EBNF for C99 provided by https://github.com/katef/kgt/blob/main/examples/c99-grammar.iso-ebnf
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +27,8 @@
 #define COUNT_ARRAY(x) ((int64_t)(sizeof(x)/sizeof(x[0])))
 
 #define OPTIONAL(x) ((x), 1)
-#define RESET()  (*p = p_saved);
+#define RESTORE(p)  (*p = p_saved);
+#define SAVE(p) parse_ctx p_saved = *p; 
 
 _Noreturn void
 die (const char * fmt, ...)
@@ -259,75 +264,149 @@ int selection_statement(parse_ctx *p);
 int iteration_statement(parse_ctx *p);
 int jump_statement(parse_ctx *p);
 
-// -----------------------------------------------------------------------
+int string_literal(parse_ctx *p);
+int integer_constant(parse_ctx *p);
+int character_constant(parse_ctx *p);
+int floating_constant(parse_ctx *p);
+int identifier(parse_ctx *p);
 
-int declaration(parse_ctx *p) { assert(0); }
-int declarator(parse_ctx *p) { assert(0); }
-int declaration_list(parse_ctx *p) { assert(0); }
-int compound_statement(parse_ctx *p) { assert(0); }
-int declaration_or_statement(parse_ctx *p) { assert(0); }
-int init_declarator_list(parse_ctx *p) { assert(0); }
-int init_declarator(parse_ctx *p) { assert(0); }
-int static_assert_declaration(parse_ctx *p) { assert(0); }
-int typedef_name(parse_ctx *p) { assert(0); }
-int function_specifier(parse_ctx *p) { assert(0); }
-int alignment_specifier(parse_ctx *p) { assert(0); }
-int pointer(parse_ctx *p) { assert(0); }
-int direct_declarator(parse_ctx *p) { assert(0); }
-int identifier_list(parse_ctx *p) { assert(0); }
-int initializer_list(parse_ctx *p) { assert(0); }
-int designative_initializer(parse_ctx *p) { assert(0); }
-int initializer(parse_ctx *p) { assert(0); }
-int constant_expression(parse_ctx *p) { assert(0); }
-int struct_or_union_specifier(parse_ctx *p) { assert(0); }
-int struct_or_union(parse_ctx *p) { assert(0); }
-int struct_declaration_list(parse_ctx *p) { assert(0); }
-int struct_declaration(parse_ctx *p) { assert(0); }
-int enum_specifier(parse_ctx *p) { assert(0); }
-int enumerator_list(parse_ctx *p) { assert(0); }
-int enumerator(parse_ctx *p) { assert(0); }
-int enumeration_constant(parse_ctx *p) { assert(0); }
-int type_qualifier_list(parse_ctx *p) { assert(0); }
-int parameter_type_list(parse_ctx *p) { assert(0); }
-int struct_declarator(parse_ctx *p) { assert(0); }
-int assignment_operator(parse_ctx *p) { assert(0); }
-int parameter_list(parse_ctx *p) { assert(0); }
-int parameter_declaration(parse_ctx *p) { assert(0); }
-int expression(parse_ctx *p) { assert(0); }
-int assignment_expression(parse_ctx *p) { assert(0); }
-int conditional_expression(parse_ctx *p) { assert(0); }
-int logical_or_expression(parse_ctx *p) { assert(0); }
-int logical_and_expression(parse_ctx *p) { assert(0); }
-int inclusive_or_expression(parse_ctx *p) { assert(0); }
-int exclusive_or_expression(parse_ctx *p) { assert(0); }
-int and_expression(parse_ctx *p) { assert(0); }
-int equality_expression(parse_ctx *p) { assert(0); }
-int relational_expression(parse_ctx *p) { assert(0); }
-int shift_expression(parse_ctx *p) { assert(0); }
-int additive_expression(parse_ctx *p) { assert(0); }
-int multiplicative_expression(parse_ctx *p) { assert(0); }
-int cast_expression(parse_ctx *p) { assert(0); }
-int unary_expression(parse_ctx *p) { assert(0); }
-int postfix_expression(parse_ctx *p) { assert(0); }
-int unary_operator(parse_ctx *p) { assert(0); }
-int primary_expression(parse_ctx *p) { assert(0); }
-int argument_expression_list(parse_ctx *p) { assert(0); }
-int constant(parse_ctx *p) { assert(0); }
-int string(parse_ctx *p) { assert(0); }
-int generic_selection(parse_ctx *p) { assert(0); }
-int generic_assoc_list(parse_ctx *p) { assert(0); }
-int generic_association(parse_ctx *p) { assert(0); }
-int designation(parse_ctx *p) { assert(0); }
-int designator_list(parse_ctx *p) { assert(0); }
-int designator(parse_ctx *p) { assert(0); }
-int statement(parse_ctx *p) { assert(0); }
-int labeled_statement(parse_ctx *p) { assert(0); }
-int expression_statement(parse_ctx *p) { assert(0); }
-int selection_statement(parse_ctx *p) { assert(0); }
-int iteration_statement(parse_ctx *p) { assert(0); }
-int jump_statement(parse_ctx *p) { assert(0); }
 
-// -----------------------------------------------------------------------
+
+// ------------------------------------------------------------------
+
+
+
+void translation_unit(parse_ctx p)
+{
+	while(p.tokens < p.tokens_end) {
+		external_declaration(&p);
+	}
+}
+
+int external_declaration (parse_ctx *p) 
+{
+	return function_definition(p) || declaration(p);
+}
+
+int function_definition(parse_ctx *p) 
+{
+	SAVE(p);
+
+	int match = declaration_specifiers(p);
+	match = match && declarator(p);
+	if(match) declaration_list(p);
+	match = match && compound_statement(p); 
+	
+	if(!match) RESTORE(p);
+	return match;
+}
+
+int declaration(parse_ctx *p)
+{
+	SAVE(p);
+	if (declaration_specifiers(p)
+		&& OPTIONAL(init_declarator_list(p))
+		&& eat_token(p, ';')) { return 1; }
+	RESTORE(p);
+
+	if (static_assert_declaration(p)) { return 1; }
+
+	if (eat_token(p, ';')) { return 1; }
+
+	return 0;
+}
+
+int declaration_specifiers(parse_ctx *p) 
+{
+	int match = declaration_specifier(p);
+	if(match) while (declaration_specifier(p));
+	return match;
+}
+
+int declaration_specifier(parse_ctx *p)
+{
+	return storage_class_specifier(p) 
+	|| type_specifier(p)
+	|| type_qualifier(p)
+	|| function_specifier(p)
+	|| alignment_specifier(p);
+}
+
+int declarator(parse_ctx *p) 
+{
+	(void) pointer(p);
+	return direct_declarator(p);
+}
+
+int declaration_list(parse_ctx *p)
+{
+	int match = declaration(p);
+	if(match) while(declaration(p)){}
+	return match;
+}
+
+int compound_statement(parse_ctx *p)
+{
+	SAVE(p);
+
+	int match = eat_token(p, '{');
+	if(match) while(declaration_or_statement(p)) {}
+	match = match && eat_token(p, '}');
+
+	if(!match) RESTORE(p);
+	return match;
+}
+
+int declaration_or_statement(parse_ctx *p)
+{
+	return declaration(p) || statement(p);
+}
+
+int init_declarator_list(parse_ctx *p)
+{
+	int match = init_declarator(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && init_declarator(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int init_declarator(parse_ctx *p)
+{
+	int match = declarator(p);
+	if (match) {
+		SAVE(p);
+		if(eat_token(p,'=') && initializer(p)) {}
+		else RESTORE(p);
+	}
+
+	return match;
+	
+}
+
+int static_assert_declaration(parse_ctx *p)
+{
+	SAVE(p);
+
+	int match = eat_identifier(p, "_Static_assert")
+	&& eat_token(p, '(')
+	&& constant_expression(p)
+	&& eat_token(p, ',')
+	&& string_literal(p)
+	&& eat_token(p,')')
+	&& eat_token(p,';');
+
+	if(!match) RESTORE(p);
+	return match;
+}
 
 int storage_class_specifier(parse_ctx *p)
 {
@@ -343,161 +422,6 @@ int storage_class_specifier(parse_ctx *p)
 		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
 		printf("\n");
 	}
-
-	return match;
-}
-
-int type_qualifier(parse_ctx *p)
-{
-	int match = eat_identifier(p, "const")
-	|| eat_identifier(p, "restrict")
-	|| eat_identifier(p, "volatile")
-	|| eat_identifier(p, "_Atomic");
-
-	if(match) {
-		printf("type_qualifier: ");
-		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
-		printf("\n");
-	}
-
-	return match;
-}
-
-int specifier_qualifier(parse_ctx *p)
-{
-	return type_specifier(p) || type_qualifier(p);
-}
-
-int specifier_qualifier_list(parse_ctx *p)
-{
-	int match = specifier_qualifier(p);
-	if(match) while(specifier_qualifier(p)){}
-	return match;
-}
-
-int direct_abstract_declarator(parse_ctx *p)
-{
-	parse_ctx p_saved = *p;
-
-	if (eat_token(p, '(') 
-		&& abstract_declarator(p)
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '(') 
-		&& parameter_type_list(p)
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '(')
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '[')
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p) 
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '[')
-		&& type_qualifier_list(p) 
-		&& OPTIONAL( 
-			OPTIONAL(eat_identifier(p, "static")) 
-			&& assignment_expression(p) )
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (eat_token(p, '[')
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& type_qualifier_list(p)
-		&& OPTIONAL( 
-			OPTIONAL(eat_identifier(p, "static"))
-			&& assignment_expression(p) )
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '(')
-		&& parameter_type_list(p)
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESET();
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '(')
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESET();
-	return 0;
-}
-
-int struct_declarator_list(parse_ctx *p)
-{
-	int match = struct_declarator(p);
-	if(match) {
-		parse_ctx copy = *p;
-		while(eat_token(&copy,',') && struct_declarator(&copy))
-			*p = copy;
-	}
-	return match;
-}
-
-int abstract_declarator(parse_ctx *p)
-{
-	if (pointer(p)) {
-		(void) direct_abstract_declarator(p);
-		return 1;
-	}
-	return direct_abstract_declarator(p);
-}
-
-int type_name(parse_ctx *p)
-{
-	int match = specifier_qualifier_list(p);
-	if (match) { (void) abstract_declarator(p); }
-	return match;
-}
-
-int atomic_type_specifier(parse_ctx *p)
-{
-	parse_ctx p_saved = *p;
-
-	int match =  eat_identifier(p, "_Atomic")
-	&& eat_token(p, '(')
-	&& type_name(p) 
-	&& eat_token(p, ')');
-
-	if(!match) RESET();
 
 	return match;
 }
@@ -536,47 +460,1170 @@ int type_specifier(parse_ctx *p)
 	return 0;
 }
 
-int declaration_specifier(parse_ctx *p)
+int typedef_name(parse_ctx *p)
 {
-	return storage_class_specifier(p) 
-	|| type_specifier(p)
-	|| type_qualifier(p)
-	|| function_specifier(p)
-	|| alignment_specifier(p);
+	// TODO add actual checking?
+	return identifier(p);
 }
 
-int declaration_specifiers(parse_ctx *p) 
+int type_qualifier(parse_ctx *p)
 {
-	int match = declaration_specifier(p);
-	if(match) while (declaration_specifier(p));
+	int match = eat_identifier(p, "const")
+	|| eat_identifier(p, "restrict")
+	|| eat_identifier(p, "volatile")
+	|| eat_identifier(p, "_Atomic");
+
+	if(match) {
+		printf("type_qualifier: ");
+		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
+		printf("\n");
+	}
+
 	return match;
 }
 
-
-int function_definition(parse_ctx *p) 
+int function_specifier(parse_ctx *p)
 {
-	parse_ctx p_saved = *p; 
+	int match = eat_identifier(p, "inline")
+	|| eat_identifier(p, "_Noreturn");
 
-	int match = declaration_specifiers(p);
-	match = match && declarator(p);
-	if(match) declaration_list(p);
-	match = match && compound_statement(p); 
+	if(match){
+		printf("function_specifier: ");
+		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
+		printf("\n");
+	}
+
+	return match;
+}
+
+int alignment_specifier(parse_ctx *p)
+{
+	SAVE(p);
 	
-	if(!match) RESET();
+	if (eat_identifier(p, "_Alignas")
+		&& eat_token(p, '(')
+		&& type_name(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "_Alignas")
+		&& eat_token(p, '(')
+		&& constant_expression(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int pointer(parse_ctx *p)
+{
+	int match = eat_token(p, '*');
+	if (match) {
+		(void) type_qualifier_list(p);
+		(void) pointer(p);
+	}
 	return match;
 }
 
-int external_declaration (parse_ctx *p) 
+int direct_declarator(parse_ctx *p)
 {
-	return function_definition(p) || declaration(p);
+	assert(0); // this function will infinite recurse. fix
+
+	SAVE(p);
+
+	if (identifier(p)) { return 1; }
+
+	if (eat_token(p, '(')
+		&& declarator(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '[')
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '[')
+		&& type_qualifier_list(p)
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '[')
+		&& type_qualifier_list(p)
+		&& OPTIONAL(eat_identifier(p, "static"))
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '[')
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '(')
+		&& parameter_type_list(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '(')
+		&& identifier_list(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (direct_declarator(p) 
+		&& eat_token(p, '(')
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	return 0;
 }
 
-void translation_unit(parse_ctx p)
+int identifier_list(parse_ctx *p)
 {
-	while(p.tokens < p.tokens_end) {
-		external_declaration(&p);
+	int match = identifier(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && identifier(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int initializer_list(parse_ctx *p)
+{
+	int match = designative_initializer(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && designative_initializer(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int designative_initializer(parse_ctx *p)
+{
+	(void) designation(p);
+	return initializer(p);
+}
+
+int initializer (parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_token(p, '{')
+		&& initializer_list(p)
+		&& OPTIONAL(eat_token(p, ','))
+		&& eat_token(p, '}')) { return 1; }
+
+	RESTORE(p);
+	
+	return assignment_expression(p);
+}
+
+int constant_expression(parse_ctx *p)
+{
+	// TODO add constraints!
+	assert(0);
+	return conditional_expression(p);
+}
+
+int atomic_type_specifier(parse_ctx *p)
+{
+	SAVE(p);
+
+	int match =  eat_identifier(p, "_Atomic")
+	&& eat_token(p, '(')
+	&& type_name(p) 
+	&& eat_token(p, ')');
+
+	if(!match) RESTORE(p);
+
+	return match;
+}
+
+int struct_or_union_specifier(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (struct_or_union(p)
+		&& eat_token(p, '{')
+		&& struct_declaration_list(p)
+		&& eat_token(p, '}')) { return 1; }
+
+	RESTORE(p);
+	if (struct_or_union(p) && identifier(p)) 
+	{ 
+
+		SAVE(p);
+
+		if (eat_token(p, '{')
+			&& struct_declaration_list(p)
+			&& eat_token(p, '}')) { }
+		else RESTORE(p);
+
+		return 1;
+	}
+
+	RESTORE(p);
+	return 0;
+}
+
+int struct_or_union(parse_ctx *p)
+{
+	return eat_identifier(p, "struct") || eat_identifier(p, "union");
+}
+
+int struct_declaration_list(parse_ctx *p)
+{
+	int match = struct_declaration(p);
+	if(match) while(struct_declaration(p)) { }
+	return match;
+}
+
+int struct_declaration(parse_ctx *p)
+{
+	SAVE(p);
+
+	// anonymous struct/union
+	if (specifier_qualifier_list(p) 
+		&& eat_token(p, ';')) {return 1;}
+
+	RESTORE(p);
+	if (specifier_qualifier_list(p)
+		&& struct_declaration_list(p)
+		&& eat_token(p, ';')) {return 1;}
+
+	RESTORE(p);
+	if (static_assert_declaration(p)) {return 1;}
+
+	RESTORE(p);
+	return 0;
+}
+
+int enum_specifier(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_identifier(p, "enum") 
+		&& eat_token(p, '{')
+		&& enumerator_list(p)
+		&& OPTIONAL(eat_token(p,','))
+		&& eat_token(p, '}')) { return 1;}
+
+	RESTORE(p);
+	if (eat_identifier(p, "enum") 
+		&& identifier(p)) 
+	{
+
+		SAVE(p);
+
+		if(eat_token(p, '{')
+			&& enumerator_list(p)
+			&& OPTIONAL(eat_token(p,','))
+			&& eat_token(p, '}')) { }
+		else RESTORE(p);
+
+		return 1;
 	}
 }
+
+int enumerator_list(parse_ctx *p)
+{
+	int match = enumerator(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && enumerator(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int enumerator(parse_ctx *p)
+{
+	int match = enumeration_constant(p);
+	if(match) {
+		SAVE(p);
+		if (eat_token(p, '=') && constant_expression(p)) { }
+		else RESTORE(p);
+	}
+	return match;
+}
+
+int enumeration_constant(parse_ctx *p)
+{
+	// todo add some checking?
+	return identifier(p);
+}
+
+int type_name(parse_ctx *p)
+{
+	int match = specifier_qualifier_list(p);
+	if (match) { (void) abstract_declarator(p); }
+	return match;
+}
+
+int specifier_qualifier_list(parse_ctx *p)
+{
+	int match = specifier_qualifier(p);
+	if(match) while(specifier_qualifier(p)){}
+	return match;
+}
+
+int specifier_qualifier(parse_ctx *p)
+{
+	return type_specifier(p) || type_qualifier(p);
+}
+
+
+int abstract_declarator(parse_ctx *p)
+{
+	if (pointer(p)) {
+		(void) direct_abstract_declarator(p);
+		return 1;
+	}
+	return direct_abstract_declarator(p);
+}
+
+
+int direct_abstract_declarator(parse_ctx *p)
+{
+	assert(0); // TODO this function will infinite loop
+	SAVE(p);
+
+	if (eat_token(p, '(') 
+		&& abstract_declarator(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '(') 
+		&& parameter_type_list(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '(')
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p) 
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& type_qualifier_list(p) 
+		&& OPTIONAL( 
+			OPTIONAL(eat_identifier(p, "static")) 
+			&& assignment_expression(p) )
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& type_qualifier_list(p)
+		&& OPTIONAL( 
+			OPTIONAL(eat_identifier(p, "static"))
+			&& assignment_expression(p) )
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '(')
+		&& parameter_type_list(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESTORE(p);
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '(')
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int struct_declarator_list(parse_ctx *p)
+{
+	int match = struct_declarator(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && struct_declarator(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int type_qualifier_list(parse_ctx *p)
+{
+	int match = type_qualifier(p);
+	if(match) while(type_qualifier(p)) {}
+	return match;
+}
+
+int parameter_type_list(parse_ctx *p)
+{
+	int match = parameter_list(p);
+	if(match){
+		SAVE(p);
+		// BUG: three dots don't need to be adjacent here
+		if (eat_token(p,',') 
+			&& eat_token(p, '.')
+			&& eat_token(p, '.')
+			&& eat_token(p, '.')) { }
+		else RESTORE(p);
+	}
+	return match;
+}
+
+int struct_declarator(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_token(p, ':') && constant_expression(p)) { return 1; }
+
+	RESTORE(p);
+	if (declarator(p)) {
+		SAVE(p);
+
+		if (eat_token(p, ':') && constant_expression(p)) { }
+		else RESTORE(p);
+
+		return 1;
+	}
+
+	RESTORE(p);
+	return 0;
+}
+
+int assignment_operator(parse_ctx *p)
+{
+	return eat_token(p, '=')
+	|| eat_token(p, CLEX_muleq)
+	|| eat_token(p, CLEX_diveq)
+	|| eat_token(p, CLEX_modeq)
+	|| eat_token(p, CLEX_pluseq)
+	|| eat_token(p, CLEX_minuseq)
+	|| eat_token(p, CLEX_shleq)
+	|| eat_token(p, CLEX_shreq)
+	|| eat_token(p, CLEX_andeq)
+	|| eat_token(p, CLEX_xoreq)
+	|| eat_token(p, CLEX_oreq);
+}
+
+
+int parameter_list(parse_ctx *p)
+{
+	int match = parameter_declaration(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && parameter_declaration(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int parameter_declaration(parse_ctx *p)
+{
+	int match = declaration_specifiers(p);
+	if(match) {
+		if(declarator(p) || abstract_declarator(p)) { }
+	}
+	return match;
+}
+
+int expression(parse_ctx *p)
+{
+	int match = assignment_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && assignment_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int assignment_expression(parse_ctx *p) 
+{
+	if(conditional_expression(p)) return 1;
+
+	SAVE(p);
+
+	if (unary_expression(p) 
+		&& assignment_operator(p)
+		&& assignment_expression(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int conditional_expression(parse_ctx *p)
+{
+	int match = logical_or_expression(p);
+	if (match) {
+		SAVE(p);
+		if (eat_token(p,'?')
+			&& expression(p)
+			&& eat_token(p, ':')
+			&& conditional_expression(p)) { }
+		else RESTORE(p);
+	}
+	return match;
+}
+
+int logical_or_expression(parse_ctx *p)
+{
+	int match = logical_and_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, CLEX_oror) && logical_and_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int logical_and_expression(parse_ctx *p)
+{
+	int match = inclusive_or_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, CLEX_andand) && inclusive_or_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int inclusive_or_expression(parse_ctx *p)
+{
+	int match = exclusive_or_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, '|') && exclusive_or_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int exclusive_or_expression(parse_ctx *p)
+{
+	int match = and_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, '^') && and_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int and_expression(parse_ctx *p)
+{
+	int match = equality_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, '&') && equality_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int equality_expression(parse_ctx *p)
+{
+	int match = relational_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if ((eat_token(p, CLEX_eq) || eat_token(p, CLEX_noteq)) 
+			&& relational_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+
+int relational_expression(parse_ctx *p)
+{
+	int match = shift_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if ((eat_token(p, '<') || eat_token(p, '>') || eat_token(p, CLEX_lesseq) || eat_token(p, CLEX_greatereq)) 
+			&& shift_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int shift_expression(parse_ctx *p)
+{
+	int match = additive_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if ((eat_token(p, CLEX_shl) || eat_token(p, CLEX_shr)) 
+			&& additive_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+
+int additive_expression(parse_ctx *p)
+{
+	int match = multiplicative_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if ((eat_token(p, '+') || eat_token(p, '-')) 
+			&& multiplicative_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+
+int multiplicative_expression(parse_ctx *p)
+{
+	int match = cast_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if ((eat_token(p, '*') || eat_token(p, '/') || eat_token(p, '%') )
+			&& cast_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int cast_expression(parse_ctx *p)
+{
+	if (unary_expression(p)) { return 1; }
+
+	SAVE(p);
+
+	if (eat_token(p, '(')
+		&& type_name(p)
+		&& eat_token(p, ')')
+		&& cast_expression(p)) { return 1; }
+	
+	RESTORE(p);
+	return 0;
+}
+
+int unary_expression(parse_ctx *p)
+{
+	if (postfix_expression(p)) { return 1; }
+
+	SAVE(p);
+
+	if ((eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus))
+		&& unary_expression(p)) { return 1;}
+
+	RESTORE(p);
+	if (unary_operator(p) 
+		&& cast_expression(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "sizeof")
+		&& unary_expression(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "sizeof")
+		&& eat_token(p, '(')
+		&& type_name(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "_Alignof")
+		&& eat_token(p, '(')
+		&& type_name(p)
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int postfix_expression(parse_ctx *p)
+{
+	assert(0); // this function will infinite loop TODO fix
+
+	if (primary_expression(p)) { return 1; }
+	
+	SAVE(p);
+
+	if (postfix_expression(p)
+		&& eat_token(p, '[')
+		&& expression(p)
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (postfix_expression(p)
+		&& eat_token(p, '(')
+		&& OPTIONAL(argument_expression_list(p))
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if (postfix_expression(p)
+		&& (eat_token(p,'.') || eat_token(p, CLEX_arrow))
+		&& identifier(p)) { return 1; }
+
+	RESTORE(p);
+	if (postfix_expression(p)
+		&& (eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus))) { return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '(')
+		&& type_name(p)
+		&& eat_token(p, ')')
+		&& eat_token(p, '{')
+		&& initializer_list(p)
+		&& OPTIONAL(eat_token(p, ','))
+		&& eat_token(p, '}')) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int unary_operator(parse_ctx *p)
+{
+	return eat_token(p, '&')
+	|| eat_token(p, '*')
+	|| eat_token(p, '+')
+	|| eat_token(p, '-')
+	|| eat_token(p, '~')
+	|| eat_token(p, '!');
+}
+
+int primary_expression(parse_ctx *p)
+{
+	if (identifier(p)) { return 1; } 
+
+	if (constant(p)) { return 1; }
+
+	if (string(p)) { return 1; }
+
+	SAVE(p);
+	if (eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')) { return 1;}
+	RESTORE(p);
+
+	if (generic_selection(p)) { return 1; }
+
+	return 0;
+}
+
+int argument_expression_list(parse_ctx *p)
+{
+	int match = assignment_expression(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && assignment_expression(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int constant(parse_ctx *p)
+{
+	return integer_constant(p)
+	|| character_constant(p)
+	|| floating_constant(p)
+	|| enumeration_constant(p);
+}
+
+int string(parse_ctx *p)
+{
+	return string_literal(p) 
+	|| eat_identifier(p, "__func__");
+}
+
+
+int generic_selection(parse_ctx *p)
+{
+	SAVE(p);
+	int match = eat_identifier(p, "_Generic")
+		&& eat_token(p, '(')
+		&& assignment_expression(p)
+		&& eat_token(p, ',')
+		&& generic_assoc_list(p)
+		&& eat_token(p, ')');
+
+	if(!match) RESTORE(p);
+	return match;
+}
+
+int generic_assoc_list(parse_ctx *p)
+{
+	int match = generic_association(p);
+
+	if(match) while(1) 
+	{
+		SAVE(p);
+		if (eat_token(p, ',') && generic_association(p)) {}
+		else {
+			RESTORE(p);
+			break;
+		}
+	}
+
+	return match;
+}
+
+int generic_association(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (type_name(p)
+		&& eat_token(p, ':')
+		&& assignment_expression(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "default")
+		&& eat_token(p, ':')
+		&& assignment_expression(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int designation(parse_ctx *p)
+{
+	SAVE(p);
+	int match = designator_list(p)
+		&& eat_token(p, '=');
+	if(!match) RESTORE(p);
+	return match;
+}
+
+int designator_list(parse_ctx *p)
+{
+	int match = designator(p);
+	if(match) while(designator(p)) {}
+	return match;
+}
+
+int designator(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_token(p, '[')
+		&& constant_expression(p)
+		&& eat_token(p,']')) { return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '.')
+		&& identifier(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int statement(parse_ctx *p)
+{
+	return labeled_statement(p)
+	|| compound_statement(p)
+	|| expression_statement(p)
+	|| selection_statement(p)
+	|| iteration_statement(p)
+	|| jump_statement(p);
+}
+
+int labeled_statement(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (identifier(p)
+		&& eat_token(p, ':')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "case")
+		&& constant_expression(p)
+		&& eat_token(p, ':')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "default")
+		&& eat_token(p, ':')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int expression_statement(parse_ctx *p)
+{
+	(void) expression(p);
+	return eat_token(p, ';');
+}
+
+int selection_statement(parse_ctx *p)
+{
+	SAVE(p);
+	
+	if (eat_identifier(p, "if") 
+		&& eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')
+		&& statement(p)
+		&& eat_identifier(p, "else")
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "if") 
+		&& eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "switch")
+		&& eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int iteration_statement(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_identifier(p, "while")
+		&& eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "do")
+		&& statement(p)
+		&& eat_identifier(p, "while")
+		&& eat_token(p, '(')
+		&& expression(p)
+		&& eat_token(p, ')')
+		&& eat_token(p, ';')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "for")
+		&& eat_token(p, '(')
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ';')
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ';')
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ')')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "for")
+		&& eat_token(p, '(')
+		&& declaration(p)
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ';')
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ')')
+		&& statement(p)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int jump_statement(parse_ctx *p)
+{
+	SAVE(p);
+
+	if (eat_identifier(p, "goto")
+		&& identifier(p)
+		&& eat_token(p, ';')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "continue")
+		&& eat_token(p, ';')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "break")
+		&& eat_token(p, ';')) { return 1; }
+
+	RESTORE(p);
+	if (eat_identifier(p, "return")
+		&& OPTIONAL(expression(p))
+		&& eat_token(p, ';')) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+
+
+int string_literal(parse_ctx *p)
+{
+	return eat_token(p, CLEX_dqstring);
+}
+
+int integer_constant(parse_ctx *p)
+{
+	return eat_token(p, CLEX_intlit);
+}
+
+int character_constant(parse_ctx *p)
+{
+	return eat_token(p, CLEX_charlit);
+}
+
+int floating_constant(parse_ctx *p)
+{
+	return eat_token(p, CLEX_floatlit);
+}
+
+int identifier(parse_ctx *p)
+{
+	return eat_token(p, CLEX_id);
+}
+
 
 /*
 	==========================================================
