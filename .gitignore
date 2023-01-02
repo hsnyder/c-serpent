@@ -1,3 +1,7 @@
 *.exe
-a.out
-a.exe
+*.out
+*.exe
+*.o
+*.pdb
+*.bak
+*.swp

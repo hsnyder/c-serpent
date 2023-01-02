@@ -5,6 +5,9 @@
 #include <assert.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <stdint.h>
+#include <limits.h>
+
 
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
@@ -16,6 +19,11 @@
 		Helper functions
 	==========================================================
 */
+
+#define COUNT_ARRAY(x) ((int64_t)(sizeof(x)/sizeof(x[0])))
+
+#define OPTIONAL(x) ((x), 1)
+#define RESET()  (*p = p_saved);
 
 _Noreturn void
 die (const char * fmt, ...)
@@ -65,13 +73,71 @@ overflow:
 	die("integer overflow when trying to convert '%14s'", save);
 }
 
+
+void nop(void) {}
+
+struct ht {
+	char **ht;
+	int32_t len;
+	int32_t exp;
+};
+
+uint64_t hash(char *s, int32_t len)
+{
+	uint64_t h = 0x100;
+	for (int32_t i = 0; i < len; i++) {
+		h ^= s[i] & 255;
+		h *= 1111111111111111111;
+	}
+	return h ^ h>>32;
+}
+
+int32_t ht_lookup(uint64_t hash, int exp, int32_t idx)
+{
+	uint32_t mask = ((uint32_t)1 << exp) - 1;
+	uint32_t step = (hash >> (64 - exp)) | 1;
+	return (idx + step) & mask;
+}
+
+char *strdup_len_or_die(char * str, int len)
+{
+	char *x = malloc(len+1);
+	if(!x) die("strdup_len_or_die: out of memory");
+	memcpy(x,str,len+1);
+	return x;
+}
+
+char *intern(struct ht *t, char *key, int keylen)
+{
+	uint64_t h = hash(key, keylen+1);
+	for (int32_t i = h;;) {
+		i = ht_lookup(h, t->exp, i);
+		if (!t->ht[i]) {
+			// empty, insert here
+			if ((uint32_t)t->len+1 == (uint32_t)1<<t->exp) {
+				die("out of memory in intern");
+			}
+			t->len++;
+			t->ht[i] = strdup_len_or_die(key, keylen);
+			return t->ht[i];
+		} else if (!strcmp(t->ht[i], key)) {
+			// found, return canonical instance
+			return t->ht[i];
+		}
+	}
+}
+
+
+
 typedef struct {
-	struct {
-		int present;
-		int argno;
-		const char * fn;
-	} err;
-} wrapgen_options;
+	long toktype; // this will be one of the enum values in stb_c_lexer
+	int string_len;
+	union {
+		double real_number;
+		long long int_number;
+		char * string;
+	};
+} token;
 
 
 
@@ -81,377 +147,569 @@ typedef struct {
 	==========================================================
 */
 
-void gen(const char * s)
+
+typedef struct {
+	token *tokens;   
+	token *tokens_end;
+} parse_ctx;
+
+int eat_identifier(parse_ctx *p, const char *id)
 {
-	abort();
+	if(p->tokens == p->tokens_end) return 0;
+	if(p->tokens[0].toktype != CLEX_id) return 0;
+	if(!strlen(id) == p->tokens[0].string_len) return 0;
+	if(!memcmp(id, p->tokens[0].string, p->tokens[0].string_len)) {
+		p->tokens++;
+		return 1;
+	}
+	return 0;
 }
 
-int eat(stb_lexer *lex, int token, const char *keyword)
+int eat_token(parse_ctx *p, long toktype)
 {
-	if(lex->token == token) {
-		if(token == CLEX_id) {
-			assert(keyword);
-			if (strcmp(keyword, lex->string) goto error;
-		}
-		return stb_c_lexer_get_token(lex);
+	if(p->tokens == p->tokens_end) return 0;
+	if(p->tokens[0].toktype == toktype) {
+		p->tokens++;
+		return 1;
 	}
-
-	char saw[100] = {0};
-	char wanted[100] = {0};
-	error: switch (lex->token) {
-		case CLEX_id        : snprintf(saw, sizeof(saw), "identifier %s", lex->string); break;
-		case CLEX_eq        : snprintf(saw, sizeof(saw), "=="); break;
-		case CLEX_noteq     : snprintf(saw, sizeof(saw), "!="); break;
-		case CLEX_lesseq    : snprintf(saw, sizeof(saw), "<="); break;
-		case CLEX_greatereq : snprintf(saw, sizeof(saw), ">="); break;
-		case CLEX_andand    : snprintf(saw, sizeof(saw), "&&"); break;
-		case CLEX_oror      : snprintf(saw, sizeof(saw), "||"); break;
-		case CLEX_shl       : snprintf(saw, sizeof(saw), "<<"); break;
-		case CLEX_shr       : snprintf(saw, sizeof(saw), ">>"); break;
-		case CLEX_plusplus  : snprintf(saw, sizeof(saw), "++"); break;
-		case CLEX_minusminus: snprintf(saw, sizeof(saw), "--"); break;
-		case CLEX_arrow     : snprintf(saw, sizeof(saw), "->"); break;
-		case CLEX_andeq     : snprintf(saw, sizeof(saw), "&="); break;
-		case CLEX_oreq      : snprintf(saw, sizeof(saw), "|="); break;
-		case CLEX_xoreq     : snprintf(saw, sizeof(saw), "^="); break;
-		case CLEX_pluseq    : snprintf(saw, sizeof(saw), "+="); break;
-		case CLEX_minuseq   : snprintf(saw, sizeof(saw), "-="); break;
-		case CLEX_muleq     : snprintf(saw, sizeof(saw), "*="); break;
-		case CLEX_diveq     : snprintf(saw, sizeof(saw), "/="); break;
-		case CLEX_modeq     : snprintf(saw, sizeof(saw), "%%="); break;
-		case CLEX_shleq     : snprintf(saw, sizeof(saw), "<<="); break;
-		case CLEX_shreq     : snprintf(saw, sizeof(saw), ">>="); break;
-		case CLEX_eqarrow   : snprintf(saw, sizeof(saw), "=>"); break;
-		case CLEX_dqstring  : snprintf(saw, sizeof(saw), "double-quoted string \"%s\"", lex->string); break;
-		case CLEX_sqstring  : snprintf(saw, sizeof(saw), "single-quoted string '%s'", lex->string); break;
-		case CLEX_charlit   : snprintf(saw, sizeof(saw), "character literal '%s'", lex->string); break;
-		case CLEX_intlit    : snprintf(saw, sizeof(saw), "integer literal %ld", lex->int_number); break;
-		case CLEX_floatlit  : snprintf(saw, sizeof(saw), "floating point literal %g", lex->real_number); break;
-		default:
-		      if (lex->token >= 0 && lex->token < 256)
-			      snprintf(saw, sizeof(saw), "%c", (int) lex->token);
-		      else {
-			      snprintf(saw, sizeof(saw), "<<<UNKNOWN TOKEN %ld >>>\n", lex->token);
-			      die("");
-		      }
-		      break;
-	}
-
-	switch (token) {
-		case CLEX_id: 
-			if (keyword) 
-				snprintf(wanted, sizeof(wanted), "keyword %s", keyword);
-			else
-				snprintf(wanted, sizeof(wanted), "identifier");
-			break;
-		case CLEX_eq        : snprintf(wanted, sizeof(wanted), "=="); break;
-		case CLEX_noteq     : snprintf(wanted, sizeof(wanted), "!="); break;
-		case CLEX_lesseq    : snprintf(wanted, sizeof(wanted), "<="); break;
-		case CLEX_greatereq : snprintf(wanted, sizeof(wanted), ">="); break;
-		case CLEX_andand    : snprintf(wanted, sizeof(wanted), "&&"); break;
-		case CLEX_oror      : snprintf(wanted, sizeof(wanted), "||"); break;
-		case CLEX_shl       : snprintf(wanted, sizeof(wanted), "<<"); break;
-		case CLEX_shr       : snprintf(wanted, sizeof(wanted), ">>"); break;
-		case CLEX_plusplus  : snprintf(wanted, sizeof(wanted), "++"); break;
-		case CLEX_minusminus: snprintf(wanted, sizeof(wanted), "--"); break;
-		case CLEX_arrow     : snprintf(wanted, sizeof(wanted), "->"); break;
-		case CLEX_andeq     : snprintf(wanted, sizeof(wanted), "&="); break;
-		case CLEX_oreq      : snprintf(wanted, sizeof(wanted), "|="); break;
-		case CLEX_xoreq     : snprintf(wanted, sizeof(wanted), "^="); break;
-		case CLEX_pluseq    : snprintf(wanted, sizeof(wanted), "+="); break;
-		case CLEX_minuseq   : snprintf(wanted, sizeof(wanted), "-="); break;
-		case CLEX_muleq     : snprintf(wanted, sizeof(wanted), "*="); break;
-		case CLEX_diveq     : snprintf(wanted, sizeof(wanted), "/="); break;
-		case CLEX_modeq     : snprintf(wanted, sizeof(wanted), "%%="); break;
-		case CLEX_shleq     : snprintf(wanted, sizeof(wanted), "<<="); break;
-		case CLEX_shreq     : snprintf(wanted, sizeof(wanted), ">>="); break;
-		case CLEX_eqarrow   : snprintf(wanted, sizeof(wanted), "=>"); break;
-		case CLEX_dqstring  : snprintf(wanted, sizeof(wanted), "double-quoted string"); break;
-		case CLEX_sqstring  : snprintf(wanted, sizeof(wanted), "single-quoted string"); break;
-		case CLEX_charlit   : snprintf(wanted, sizeof(wanted), "character literal"); break;
-		case CLEX_intlit    : snprintf(wanted, sizeof(wanted), "integer literal"); break;
-		case CLEX_floatlit  : snprintf(wanted, sizeof(wanted), "floating point literal"); break;
-		default:
-		      if (lex->token >= 0 && lex->token < 256)
-			      snprintf(wanted, sizeof(wanted), "%c", (int) lex->token);
-		      else {
-			      die("invalid argument to 'eat'");
-		      }
-		      break;
-	}
-	
-	stb_lex_location loc = {0};
-	stb_c_lexer_get_location(lex, lex->where_firstchar, &loc);
-	die("Parse error at line %i, character %i: Expected %s, found %s", loc->line_number, loc->line_offset, wanted, saw);
 	return 0;
 }
 
 
-void external_declaration(stb_lexer *lex)
+// -----------------------------------------------------------------------
+
+
+int external_declaration(parse_ctx *p);
+int function_definition(parse_ctx *p);
+int declaration(parse_ctx *p);
+int declaration_specifiers(parse_ctx *p);
+int declaration_specifier(parse_ctx *p);
+int declarator(parse_ctx *p);
+int declaration_list(parse_ctx *p);
+int compound_statement(parse_ctx *p);
+int declaration_or_statement(parse_ctx *p);
+int init_declarator_list(parse_ctx *p);
+int init_declarator(parse_ctx *p);
+int static_assert_declaration(parse_ctx *p);
+int storage_class_specifier(parse_ctx *p);
+int type_specifier(parse_ctx *p);
+int typedef_name(parse_ctx *p);
+int type_qualifier(parse_ctx *p);
+int function_specifier(parse_ctx *p);
+int alignment_specifier(parse_ctx *p);
+int pointer(parse_ctx *p);
+int direct_declarator(parse_ctx *p);
+int identifier_list(parse_ctx *p);
+int initializer_list(parse_ctx *p);
+int designative_initializer(parse_ctx *p);
+int initializer(parse_ctx *p);
+int constant_expression(parse_ctx *p);
+int atomic_type_specifier(parse_ctx *p);
+int struct_or_union_specifier(parse_ctx *p);
+int struct_or_union(parse_ctx *p);
+int struct_declaration_list(parse_ctx *p);
+int struct_declaration(parse_ctx *p);
+int enum_specifier(parse_ctx *p);
+int enumerator_list(parse_ctx *p);
+int enumerator(parse_ctx *p);
+int enumeration_constant(parse_ctx *p);
+int type_name(parse_ctx *p);
+int specifier_qualifier_list(parse_ctx *p);
+int specifier_qualifier(parse_ctx *p);
+int abstract_declarator(parse_ctx *p);
+int direct_abstract_declarator(parse_ctx *p);
+int type_qualifier_list(parse_ctx *p);
+int parameter_type_list(parse_ctx *p);
+int struct_declarator(parse_ctx *p);
+int assignment_operator(parse_ctx *p);
+int parameter_list(parse_ctx *p);
+int parameter_declaration(parse_ctx *p);
+int expression(parse_ctx *p);
+int assignment_expression(parse_ctx *p);
+int conditional_expression(parse_ctx *p);
+int logical_or_expression(parse_ctx *p);
+int logical_and_expression(parse_ctx *p);
+int inclusive_or_expression(parse_ctx *p);
+int exclusive_or_expression(parse_ctx *p);
+int and_expression(parse_ctx *p);
+int equality_expression(parse_ctx *p);
+int relational_expression(parse_ctx *p);
+int shift_expression(parse_ctx *p);
+int additive_expression(parse_ctx *p);
+int multiplicative_expression(parse_ctx *p);
+int cast_expression(parse_ctx *p);
+int unary_expression(parse_ctx *p);
+int postfix_expression(parse_ctx *p);
+int unary_operator(parse_ctx *p);
+int primary_expression(parse_ctx *p);
+int argument_expression_list(parse_ctx *p);
+int constant(parse_ctx *p);
+int string(parse_ctx *p);
+int generic_selection(parse_ctx *p);
+int generic_assoc_list(parse_ctx *p);
+int generic_association(parse_ctx *p);
+int designation(parse_ctx *p);
+int designator_list(parse_ctx *p);
+int designator(parse_ctx *p);
+int statement(parse_ctx *p);
+int labeled_statement(parse_ctx *p);
+int labeled_statement(parse_ctx *p);
+int expression_statement(parse_ctx *p);
+int selection_statement(parse_ctx *p);
+int iteration_statement(parse_ctx *p);
+int jump_statement(parse_ctx *p);
+
+// -----------------------------------------------------------------------
+
+int declaration(parse_ctx *p) { assert(0); }
+int declarator(parse_ctx *p) { assert(0); }
+int declaration_list(parse_ctx *p) { assert(0); }
+int compound_statement(parse_ctx *p) { assert(0); }
+int declaration_or_statement(parse_ctx *p) { assert(0); }
+int init_declarator_list(parse_ctx *p) { assert(0); }
+int init_declarator(parse_ctx *p) { assert(0); }
+int static_assert_declaration(parse_ctx *p) { assert(0); }
+int typedef_name(parse_ctx *p) { assert(0); }
+int function_specifier(parse_ctx *p) { assert(0); }
+int alignment_specifier(parse_ctx *p) { assert(0); }
+int pointer(parse_ctx *p) { assert(0); }
+int direct_declarator(parse_ctx *p) { assert(0); }
+int identifier_list(parse_ctx *p) { assert(0); }
+int initializer_list(parse_ctx *p) { assert(0); }
+int designative_initializer(parse_ctx *p) { assert(0); }
+int initializer(parse_ctx *p) { assert(0); }
+int constant_expression(parse_ctx *p) { assert(0); }
+int struct_or_union_specifier(parse_ctx *p) { assert(0); }
+int struct_or_union(parse_ctx *p) { assert(0); }
+int struct_declaration_list(parse_ctx *p) { assert(0); }
+int struct_declaration(parse_ctx *p) { assert(0); }
+int enum_specifier(parse_ctx *p) { assert(0); }
+int enumerator_list(parse_ctx *p) { assert(0); }
+int enumerator(parse_ctx *p) { assert(0); }
+int enumeration_constant(parse_ctx *p) { assert(0); }
+int type_qualifier_list(parse_ctx *p) { assert(0); }
+int parameter_type_list(parse_ctx *p) { assert(0); }
+int struct_declarator(parse_ctx *p) { assert(0); }
+int assignment_operator(parse_ctx *p) { assert(0); }
+int parameter_list(parse_ctx *p) { assert(0); }
+int parameter_declaration(parse_ctx *p) { assert(0); }
+int expression(parse_ctx *p) { assert(0); }
+int assignment_expression(parse_ctx *p) { assert(0); }
+int conditional_expression(parse_ctx *p) { assert(0); }
+int logical_or_expression(parse_ctx *p) { assert(0); }
+int logical_and_expression(parse_ctx *p) { assert(0); }
+int inclusive_or_expression(parse_ctx *p) { assert(0); }
+int exclusive_or_expression(parse_ctx *p) { assert(0); }
+int and_expression(parse_ctx *p) { assert(0); }
+int equality_expression(parse_ctx *p) { assert(0); }
+int relational_expression(parse_ctx *p) { assert(0); }
+int shift_expression(parse_ctx *p) { assert(0); }
+int additive_expression(parse_ctx *p) { assert(0); }
+int multiplicative_expression(parse_ctx *p) { assert(0); }
+int cast_expression(parse_ctx *p) { assert(0); }
+int unary_expression(parse_ctx *p) { assert(0); }
+int postfix_expression(parse_ctx *p) { assert(0); }
+int unary_operator(parse_ctx *p) { assert(0); }
+int primary_expression(parse_ctx *p) { assert(0); }
+int argument_expression_list(parse_ctx *p) { assert(0); }
+int constant(parse_ctx *p) { assert(0); }
+int string(parse_ctx *p) { assert(0); }
+int generic_selection(parse_ctx *p) { assert(0); }
+int generic_assoc_list(parse_ctx *p) { assert(0); }
+int generic_association(parse_ctx *p) { assert(0); }
+int designation(parse_ctx *p) { assert(0); }
+int designator_list(parse_ctx *p) { assert(0); }
+int designator(parse_ctx *p) { assert(0); }
+int statement(parse_ctx *p) { assert(0); }
+int labeled_statement(parse_ctx *p) { assert(0); }
+int expression_statement(parse_ctx *p) { assert(0); }
+int selection_statement(parse_ctx *p) { assert(0); }
+int iteration_statement(parse_ctx *p) { assert(0); }
+int jump_statement(parse_ctx *p) { assert(0); }
+
+// -----------------------------------------------------------------------
+
+int storage_class_specifier(parse_ctx *p)
 {
-	
+	int match = eat_identifier(p, "typedef")
+	|| eat_identifier(p, "extern")
+	|| eat_identifier(p, "static")
+	|| eat_identifier(p, "_Thread_local")
+	|| eat_identifier(p, "auto")
+	|| eat_identifier(p, "register");
+
+	if(match) {
+		printf("storage_class_specifier: ");
+		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
+		printf("\n");
+	}
+
+	return match;
+}
+
+int type_qualifier(parse_ctx *p)
+{
+	int match = eat_identifier(p, "const")
+	|| eat_identifier(p, "restrict")
+	|| eat_identifier(p, "volatile")
+	|| eat_identifier(p, "_Atomic");
+
+	if(match) {
+		printf("type_qualifier: ");
+		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
+		printf("\n");
+	}
+
+	return match;
+}
+
+int specifier_qualifier(parse_ctx *p)
+{
+	return type_specifier(p) || type_qualifier(p);
+}
+
+int specifier_qualifier_list(parse_ctx *p)
+{
+	int match = specifier_qualifier(p);
+	if(match) while(specifier_qualifier(p)){}
+	return match;
+}
+
+int direct_abstract_declarator(parse_ctx *p)
+{
+	parse_ctx p_saved = *p;
+
+	if (eat_token(p, '(') 
+		&& abstract_declarator(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '(') 
+		&& parameter_type_list(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '(')
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '[')
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p) 
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '[')
+		&& type_qualifier_list(p) 
+		&& OPTIONAL( 
+			OPTIONAL(eat_identifier(p, "static")) 
+			&& assignment_expression(p) )
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (eat_token(p, '[')
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& OPTIONAL(eat_token(p, '*'))
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& type_qualifier_list(p)
+		&& OPTIONAL( 
+			OPTIONAL(eat_identifier(p, "static"))
+			&& assignment_expression(p) )
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '[')
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '(')
+		&& parameter_type_list(p)
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESET();
+	if (direct_abstract_declarator(p)
+		&& eat_token(p, '(')
+		&& eat_token(p, ')')) {  return 1; }
+
+	RESET();
+	return 0;
+}
+
+int struct_declarator_list(parse_ctx *p)
+{
+	int match = struct_declarator(p);
+	if(match) {
+		parse_ctx copy = *p;
+		while(eat_token(&copy,',') && struct_declarator(&copy))
+			*p = copy;
+	}
+	return match;
+}
+
+int abstract_declarator(parse_ctx *p)
+{
+	if (pointer(p)) {
+		(void) direct_abstract_declarator(p);
+		return 1;
+	}
+	return direct_abstract_declarator(p);
+}
+
+int type_name(parse_ctx *p)
+{
+	int match = specifier_qualifier_list(p);
+	if (match) { (void) abstract_declarator(p); }
+	return match;
+}
+
+int atomic_type_specifier(parse_ctx *p)
+{
+	parse_ctx p_saved = *p;
+
+	int match =  eat_identifier(p, "_Atomic")
+	&& eat_token(p, '(')
+	&& type_name(p) 
+	&& eat_token(p, ')');
+
+	if(!match) RESET();
+
+	return match;
+}
+
+int type_specifier(parse_ctx *p)
+{
+	if(p->tokens == p->tokens_end) return 0;
+
+	if (atomic_type_specifier(p)) return 1;
+	else if (struct_or_union_specifier(p)) return 1;
+	else if (enum_specifier(p)) return 1;
+	else if (typedef_name(p)) return 1;
+
+	else if (p->tokens[0].toktype == CLEX_id) {
+
+		int match = eat_identifier(p, "void")
+		|| eat_identifier(p, "char")
+		|| eat_identifier(p, "short")
+		|| eat_identifier(p, "int")
+		|| eat_identifier(p, "long")
+		|| eat_identifier(p, "float")
+		|| eat_identifier(p, "double")
+		|| eat_identifier(p, "signed")
+		|| eat_identifier(p, "unsigned")
+		|| eat_identifier(p, "_Bool")
+		|| eat_identifier(p, "_Complex")
+		|| eat_identifier(p, "_Imaginary");
+
+		if(match) {
+			printf("type_specifier: ");
+			fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
+			printf("\n");
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int declaration_specifier(parse_ctx *p)
+{
+	return storage_class_specifier(p) 
+	|| type_specifier(p)
+	|| type_qualifier(p)
+	|| function_specifier(p)
+	|| alignment_specifier(p);
+}
+
+int declaration_specifiers(parse_ctx *p) 
+{
+	int match = declaration_specifier(p);
+	if(match) while (declaration_specifier(p));
+	return match;
 }
 
 
-void translation_unit(stb_lexer *lex)
+int function_definition(parse_ctx *p) 
 {
-	while (stb_c_lexer_get_token(lex)) {
-		external_declaration(lex);
+	parse_ctx p_saved = *p; 
+
+	int match = declaration_specifiers(p);
+	match = match && declarator(p);
+	if(match) declaration_list(p);
+	match = match && compound_statement(p); 
+	
+	if(!match) RESET();
+	return match;
+}
+
+int external_declaration (parse_ctx *p) 
+{
+	return function_definition(p) || declaration(p);
+}
+
+void translation_unit(parse_ctx p)
+{
+	while(p.tokens < p.tokens_end) {
+		external_declaration(&p);
 	}
 }
 
-
 /*
 	==========================================================
-		Comment parsing, main, etc
+		Main
 	==========================================================
 */
 
 
-void 
-wrap_identifier (const char * filetext, const char * identifier, wrapgen_options opts)
+int 
+main (const char *filetext, char *argv[])
 {
-	size_t file_len = strlen(filetext);
-	char * scratch = malloc(file_len+1);
-	if(!scratch) die("out of memory");
-
-	stb_lexer lex;
-	stb_c_lexer_init(&lex, filetext, filetext+file_len, scratch, file_len+1);
-
-	while (stb_c_lexer_get_token(&lex)) {
-		if (lex.token == CLEX_parse_error) {
-			die("<<<PARSE ERROR>>>");
-			break;
+	
+	/*
+		Figure out what file we're asked to work on
+		if -f flag is supplied, obey that, 
+		else use stdin
+	*/
+	
+	char *filename = 0;
+	char **arg = argv;
+	while(*(++arg)) {
+		if (!strcmp("-f",*arg)) {
+			if(!++arg) die("got -f flag but no filename follows");
+			filename = *arg;
 		}
-
-		// continue here
 	}
-
-	free (scratch);
-}
-
-void 
-main_x (const char *filetext, char *argv[])
-{
+	
+	FILE *f = stdin;
+	if(filename) {
+		f = fopen(filename, "rb");
+		if(!f) die("couldn't open '%s'", filename);
+	}
+	
 	/*
 		Wrapgen flags are:
 		-e,arg,chkfn add custom error checking (call chkfn and pass arg (specified by number))
 	*/
-
-	wrapgen_options options = {0};
-
-	while (argv[0]) 
-	{
-		const char *a = argv[0];
-
-		if (a[0]=='-' && a[1]=='e') {
-
-			const char * errmsg = "malformed -e flag (format is -e,argno,functiontocall)";
-			expect(a[2]==',', errmsg);
-
-			int n = 0;
-			options.err.argno = xatoi(a+3, &n);
-
-			expect(a[n]==',', errmsg); 
-			options.err.fn = a+n+1; 
-
-			options.err.present = 1;
-		}
-
-		else if (a[0] == '-') {
-			die("wrapgen flag '%s' not understood", a);
-		}
-
-		else {
-			wrap_identifier(filetext, a, options);
-		}
-			
-		argv++;
-	}
-}
-
-void 
-execute_command (const char *filetext, const char *cmd, long sz)
-{
-	/* 
-		Tokenize the provided command and pass the argument list to main_x
+	
+	
+	/*
+		Allocate buffers
 	*/
 	
-	char buf[4096] = {0};
-	if (sz >= sizeof(buf)) 
-		die("Wrapgen command lines must be < 4kB");
-	memcpy(buf,cmd,sz);
-
-	char **args = 0;
-
-	long argstart = -1;
-	for (long i = 0; i < sz; i++) 
-	{
-		if (argstart < 0  &&  !isspace(buf[i]))
-			argstart = i;
-
-		else if (argstart >= 0  &&  isspace(buf[i])) {
-			buf[i] = 0;
-			buf_push(args, buf+argstart);
-			argstart = -1;
-		}
-	}
-
-	main_x(filetext, args);
-	buf_free(args);
-}
-
-const char * 
-command_until_eol (const char *filetext, const char *c)
-{
-	/* 
-		Assume that from c until the end of the line (or file) is a wrapgen command and run it. 
-		Returns either the null terminator, or the first char past the end of the line, as applicable. 
-	*/
-
-	const char * end = c;
-	const char * retn = 0;
-	for(;;)
-	{
-		if(*end == 0) {
-			retn = end;
-			break;
-		}
-		if(*end == '\n') {
-			retn = end + 1;
-			break;
-		}
-
-		end++;
-	}
-
-	execute_command(filetext, c, end-c);
-
-	return retn;
-}
-
-const char *  
-process_slashslash_comment (const char *filetext, const char *c)
-{
+	char  *text         = malloc(1<<27);
+	char  *string_store = malloc(0x10000);
+	token *tokens       = malloc((1<<27) * sizeof(*tokens));
+	struct ht stringtable = {
+		.ht = malloc((1<<28) * sizeof(char*)),
+		.exp = 28,
+	};
+	int ntok = 0;
+	
+	if(!(text && string_store && tokens && stringtable.ht)) die("out of mem");
+	
 	/*
-		Assume that a single-line comment starts at c, and parse it for wrapgen commands.
-		Run any wrapgen commands encountered.
-		Returns either the null terminator, or the first char past the end of the comment, as applicable. 
+		Read input file
 	*/
-	int search = 1;
-
-	for (;;) {
-		if (c[0] == 0) return c;
-		if (c[0] == '\n') return c+1;
-
-		if (search) 
-		{
-			if (*c == 'w'  &&  !strncmp(c,"wrapgen",7)  &&  isspace(c[7])) 
-			{
-				return command_until_eol(filetext, c+7);
-			} 
-			else if (!isspace(*c)) 
-			{
-				search = 0;
-			}
-		}
-
-		c++;
-	}
-}
-
-const char *  
-process_slashstar_comment (const char *filetext, const char *c)
-{
+	
+	long long len = fread(text, 1, 1<<27, f);
+	if(len == (1<<27)) die("input file too long");
+	fclose(f);
+	
 	/*
-		Assume that a multi-line comment starts at c, and parse it for wrapgen commands.
-		Run any wrapgen commands encountered.
-		Returns either the null terminator, or the first char past the end of the comment, as applicable. 
+		Lex whole file
 	*/
-	int search = 1;
-
-	for(;;) {
-		if (c[0] == 0) return c;
-		if (c[0] == '*'  &&  c[1] == '/') return c+2;
-
-		if (search)
+	
+	stb_lexer lex = {0};
+	stb_c_lexer_init(&lex, text, text+len, (char *) string_store, 0x10000);
+	while(stb_c_lexer_get_token(&lex)) {
+		token t = {.toktype = lex.token};
+		switch(lex.token)
 		{
-			if (*c == 'w'  &&  !strncmp(c,"wrapgen",7)  &&  isspace(c[7])) 
-			{
-				c = command_until_eol(filetext, c+7);
-				search = 1;
-			} 
-			else if (!isspace(*c)) 
-			{
-				search = 0;
-			}
-		}
-
-		if (c[0] == '\n') {
-			search = 1;
-		}
-
-		c++;
-	}
-}
-
-void 
-usage (char *argv[]) 
-{ 
-	die( "usage: %s filename [filenames...]\n" , argv[0]); 
-}
-
-int 
-main (int argc, char *argv[])
-{
-	if (!argv[1])
-		usage(argv);
-	argv++;
-
-
-	long bufsz = 1<<20;
-	char * buf = malloc(bufsz);
-	if(!buf) die("out of memory");
-
-	while(argv[0])
-	{
-		FILE * f = 0; 
-		if (!(f = fopen(argv[0], "rb")))
-			die("couldn't open %s", argv[0]);
-
-		if (fseek(f, 0, SEEK_END))
-			die("couldn't fseek on %s", argv[0]);
-
-		long fsz = ftell(f);
-		rewind(f);
-		if (fsz == -1L)
-			die("couldn't ftell on %s", argv[0]);
-
-		if (fsz+1 > bufsz) {
-			buf = realloc(buf, fsz+1);
-			if (!buf) die("out of memory");
-		}
+			case CLEX_id: 
+			case CLEX_dqstring:
+			case CLEX_sqstring: 		
+				t.string_len = strlen(lex.string);	
+				t.string = intern(&stringtable, lex.string, t.string_len);
+				break;
+			case CLEX_charlit:
+				t.string = lex.string;
+				t.string_len = 1;
+				break;
+			case CLEX_intlit:
+				t.int_number = lex.int_number;
+				break;
+			case CLEX_floatlit:
+				t.real_number = lex.real_number;
+				break;
+			case CLEX_eq:
+			case CLEX_noteq:
+			case CLEX_lesseq:
+			case CLEX_greatereq:
+			case CLEX_andand:
+			case CLEX_oror:
+			case CLEX_shl:
+			case CLEX_shr:
+			case CLEX_plusplus:
+			case CLEX_minusminus:
+			case CLEX_arrow:
+			case CLEX_andeq:
+			case CLEX_oreq:
+			case CLEX_xoreq:
+			case CLEX_pluseq:
+			case CLEX_minuseq:
+			case CLEX_muleq:
+			case CLEX_diveq:
+			case CLEX_modeq:
+			case CLEX_shleq:
+			case CLEX_shreq:
+			case CLEX_eqarrow:
+				break;
+			default:
+				if (!(lex.token >= 0 && lex.token < 256)) {
+					stb_lex_location loc = {0};
+					stb_c_lexer_get_location(&lex, lex.where_firstchar, &loc);
+					die("Lex error at line %i, character %i: unknown token %ld", loc.line_number, loc.line_offset, lex.token);
+				}
+				break;
+		}		
 		
-		if (fsz != fread (buf, 1, fsz, f))
-			die ("size of %s changed during run", argv[0]);
-
-		buf[fsz] = 0;
-		
-		const char *c = buf;
-		while(*c) 
-		{
-			if (c[0] == '/'  &&  c[1] == '/') 
-				c = process_slashslash_comment(buf, c+2);
-
-			else if (c[0] == '/'  &&  c[1] == '*') 
-				c = process_slashstar_comment(buf, c+2);
-
-			else c++;
-		}
-
-		fclose(f);
-		argv++;
+		tokens[ntok++] = t;
 	}
 	
-	exit(EXIT_SUCCESS);
+	/*
+		Run parser on token array.
+	*/
+
+	long delimiterstack[4096];
+	
+	parse_ctx p = {
+		.tokens      =  tokens,
+		.tokens_end  =  tokens+ntok,
+	};
+
+	translation_unit(p);
 }
