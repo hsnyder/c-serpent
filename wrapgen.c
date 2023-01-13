@@ -33,14 +33,11 @@ typedef struct {
 } typedef_table;
 
 typedef struct {
-	token *tokens;   
-	token *tokens_end;
-	token *tokens_first;   
-	typedef_table ttab;
+	token     *tokens;   
+	token     *tokens_end;
+	token     *tokens_first;   
+	typedef_table     ttab;
 } parse_ctx;
-
-
-
 
 /*
 	==========================================================
