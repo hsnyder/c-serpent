@@ -1,7 +1,3 @@
-/*
-Credit to the EBNF for C99 provided by https://github.com/katef/kgt/blob/main/examples/c99-grammar.iso-ebnf
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +11,35 @@ Credit to the EBNF for C99 provided by https://github.com/katef/kgt/blob/main/ex
 
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
-#include "buf.h"
+
+typedef struct {
+	long toktype; // this will be one of the enum values in stb_c_lexer
+	int string_len;
+	union {
+		double real_number;
+		long long int_number;
+		char * string;
+	};
+} token;
+
+
+typedef struct {
+	int sym_len;
+	char *symbol;
+} typedef_entry;
+
+typedef struct {
+	typedef_entry *td;	
+} typedef_table;
+
+typedef struct {
+	token *tokens;   
+	token *tokens_end;
+	token *tokens_first;   
+	typedef_table ttab;
+} parse_ctx;
+
+
 
 
 /*
@@ -29,19 +53,79 @@ Credit to the EBNF for C99 provided by https://github.com/katef/kgt/blob/main/ex
 #define OPTIONAL(x) ((x), 1)
 #define RESTORE(p)  (*p = p_saved);
 #define SAVE(p) parse_ctx p_saved = *p; 
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define MAX(a,b) ((a)>(b)?(a):(b))
+
+static void repr_token(int bufsz, char buf[], token t)
+{
+	switch (t.toktype) {
+		case CLEX_id        : snprintf(buf, bufsz,"%s", t.string); break;
+		case CLEX_eq        : snprintf(buf, bufsz,"=="); break;
+		case CLEX_noteq     : snprintf(buf, bufsz,"!="); break;
+		case CLEX_lesseq    : snprintf(buf, bufsz,"<="); break;
+		case CLEX_greatereq : snprintf(buf, bufsz,">="); break;
+		case CLEX_andand    : snprintf(buf, bufsz,"&&"); break;
+		case CLEX_oror      : snprintf(buf, bufsz,"||"); break;
+		case CLEX_shl       : snprintf(buf, bufsz,"<<"); break;
+		case CLEX_shr       : snprintf(buf, bufsz,">>"); break;
+		case CLEX_plusplus  : snprintf(buf, bufsz,"++"); break;
+		case CLEX_minusminus: snprintf(buf, bufsz,"--"); break;
+		case CLEX_arrow     : snprintf(buf, bufsz,"->"); break;
+		case CLEX_andeq     : snprintf(buf, bufsz,"&="); break;
+		case CLEX_oreq      : snprintf(buf, bufsz,"|="); break;
+		case CLEX_xoreq     : snprintf(buf, bufsz,"^="); break;
+		case CLEX_pluseq    : snprintf(buf, bufsz,"+="); break;
+		case CLEX_minuseq   : snprintf(buf, bufsz,"-="); break;
+		case CLEX_muleq     : snprintf(buf, bufsz,"*="); break;
+		case CLEX_diveq     : snprintf(buf, bufsz,"/="); break;
+		case CLEX_modeq     : snprintf(buf, bufsz,"%%="); break;
+		case CLEX_shleq     : snprintf(buf, bufsz,"<<="); break;
+		case CLEX_shreq     : snprintf(buf, bufsz,">>="); break;
+		case CLEX_eqarrow   : snprintf(buf, bufsz,"=>"); break;
+		case CLEX_dqstring  : snprintf(buf, bufsz,"\"%s\"", t.string); break;
+		case CLEX_sqstring  : snprintf(buf, bufsz,"'\"%s\"'", t.string); break;
+		case CLEX_charlit   : snprintf(buf, bufsz,"'%s'", t.string); break;
+		case CLEX_intlit    : snprintf(buf, bufsz,"#%lli", t.int_number); break;
+		case CLEX_floatlit  : snprintf(buf, bufsz,"%g", t.real_number); break;
+		default:
+				      if (t.toktype >= 0 && t.toktype < 256)
+					      snprintf(buf, bufsz,"%c", (int) t.toktype);
+				      else {
+					      snprintf(buf, bufsz,"<<<UNKNOWN TOKEN %ld >>>\n", t.toktype);
+				      }
+				      break;
+	}
+}
+
+void dump_context(FILE *f, parse_ctx *p)
+{
+	long long before = MIN(p->tokens - p->tokens_first, 20); 
+	long long after  = MIN(p->tokens_end - p->tokens, 20);
+
+	for (int i = -before; i < after; i++)
+	{
+		char buf[1000] = {0};
+		repr_token(sizeof(buf), buf, p->tokens[i]);
+		if( i == 0 )
+			fprintf(f, "HERE>>> %s ", buf);
+		else 
+			fprintf(f, "%s ", buf);
+	}
+	fprintf(f,"\n");
+}
+
 
 _Noreturn void
-die (const char * fmt, ...)
+die (parse_ctx *p, const char * fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
 	vfprintf(stderr, fmt, va);
 	va_end(va);
 	fprintf(stderr, "\n");
+	if(p) dump_context(stderr, p);
 	exit(EXIT_FAILURE);
 }
-
-#define expect(cond, ...) if(!(cond)){die(__VA_ARGS__ );}
 
 int 
 xatoi (const char *x, int *nchars_read)
@@ -69,17 +153,15 @@ xatoi (const char *x, int *nchars_read)
 		x++;
 	}
 	
-	if (!n) die("couldn't parse '%6s' as an integer", save);
+	if (!n) die(0, "couldn't parse '%6s' as an integer", save);
 
 	if (nchars_read) *nchars_read = x-save;
 	return v * sign;
 
 overflow:
-	die("integer overflow when trying to convert '%14s'", save);
+	die(0, "integer overflow when trying to convert '%14s'", save);
 }
 
-
-void nop(void) {}
 
 struct ht {
 	char **ht;
@@ -107,7 +189,7 @@ int32_t ht_lookup(uint64_t hash, int exp, int32_t idx)
 char *strdup_len_or_die(char * str, int len)
 {
 	char *x = malloc(len+1);
-	if(!x) die("strdup_len_or_die: out of memory");
+	if(!x) die(0, "strdup_len_or_die: out of memory");
 	memcpy(x,str,len+1);
 	return x;
 }
@@ -120,7 +202,7 @@ char *intern(struct ht *t, char *key, int keylen)
 		if (!t->ht[i]) {
 			// empty, insert here
 			if ((uint32_t)t->len+1 == (uint32_t)1<<t->exp) {
-				die("out of memory in intern");
+				die(0, "out of memory in intern");
 			}
 			t->len++;
 			t->ht[i] = strdup_len_or_die(key, keylen);
@@ -133,17 +215,31 @@ char *intern(struct ht *t, char *key, int keylen)
 }
 
 
+#include "buf.h"
 
-typedef struct {
-	long toktype; // this will be one of the enum values in stb_c_lexer
-	int string_len;
-	union {
-		double real_number;
-		long long int_number;
-		char * string;
-	};
-} token;
+int check_typedef(parse_ctx *p, char *symbol, int sym_len)
+{
+	assert(symbol);
+	if (sym_len < 1) sym_len = strlen(symbol);
 
+	for(int i = 0; i < buf_size(p->ttab.td); i++) 
+		if (sym_len == p->ttab.td[i].sym_len && 
+			memcmp(p->ttab.td[i].symbol, symbol, sym_len)) { return 1; }
+	return 0;
+}
+
+void add_typedef(parse_ctx *p, char *symbol, int sym_len)
+{
+	assert(symbol);
+	if (sym_len < 1) sym_len = strlen(symbol);
+
+	if(!check_typedef(p, symbol, sym_len))
+		buf_push(p->ttab.td, 
+			((typedef_entry){
+				.sym_len = sym_len,
+				.symbol  = strdup_len_or_die(symbol, sym_len),
+			}));
+}
 
 
 /*
@@ -153,16 +249,11 @@ typedef struct {
 */
 
 
-typedef struct {
-	token *tokens;   
-	token *tokens_end;
-} parse_ctx;
-
 int eat_identifier(parse_ctx *p, const char *id)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype != CLEX_id) return 0;
-	if(!strlen(id) == p->tokens[0].string_len) return 0;
+	if((long long)strlen(id) != p->tokens[0].string_len) return 0;
 	if(!memcmp(id, p->tokens[0].string, p->tokens[0].string_len)) {
 		p->tokens++;
 		return 1;
@@ -213,6 +304,7 @@ int atomic_type_specifier(parse_ctx *p);
 int struct_or_union_specifier(parse_ctx *p);
 int struct_or_union(parse_ctx *p);
 int struct_declaration_list(parse_ctx *p);
+int struct_declarator_list(parse_ctx *p);
 int struct_declaration(parse_ctx *p);
 int enum_specifier(parse_ctx *p);
 int enumerator_list(parse_ctx *p);
@@ -279,7 +371,8 @@ int identifier(parse_ctx *p);
 void translation_unit(parse_ctx p)
 {
 	while(p.tokens < p.tokens_end) {
-		external_declaration(&p);
+		if(!external_declaration(&p)) 
+			die(&p, "Failed to parse before end of file");
 	}
 }
 
@@ -462,8 +555,15 @@ int type_specifier(parse_ctx *p)
 
 int typedef_name(parse_ctx *p)
 {
-	// TODO add actual checking?
-	return identifier(p);
+	if(p->tokens == p->tokens_end) return 0;
+	if(p->tokens[0].toktype == CLEX_id) {
+
+		if (check_typedef(p, p->tokens[0].string, p->tokens[0].string_len)) {
+			p->tokens++;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 int type_qualifier(parse_ctx *p)
@@ -525,10 +625,8 @@ int pointer(parse_ctx *p)
 	return match;
 }
 
-int direct_declarator(parse_ctx *p)
+int direct_declarator_head(parse_ctx *p) 
 {
-	assert(0); // this function will infinite recurse. fix
-
 	SAVE(p);
 
 	if (identifier(p)) { return 1; }
@@ -538,59 +636,67 @@ int direct_declarator(parse_ctx *p)
 		&& eat_token(p, ')')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '[')
+	return 0;
+}
+
+int direct_declarator_tail(parse_ctx *p) 
+{
+	SAVE(p);
+
+	if (eat_token(p, '[')
 		&& OPTIONAL(eat_token(p, '*'))
 		&& eat_token(p, ']')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '[')
+	if (eat_token(p, '[')
 		&& eat_identifier(p, "static")
 		&& OPTIONAL(type_qualifier_list(p))
 		&& assignment_expression(p)
 		&& eat_token(p, ']')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '[')
+	if (eat_token(p, '[')
 		&& type_qualifier_list(p)
 		&& OPTIONAL(eat_token(p, '*'))
 		&& eat_token(p, ']')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '[')
+	if (eat_token(p, '[')
 		&& type_qualifier_list(p)
 		&& OPTIONAL(eat_identifier(p, "static"))
 		&& assignment_expression(p)
 		&& eat_token(p, ']')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '[')
+	if (eat_token(p, '[')
 		&& assignment_expression(p)
 		&& eat_token(p, ']')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '(')
+	if (eat_token(p, '(')
 		&& parameter_type_list(p)
 		&& eat_token(p, ')')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '(')
+	if (eat_token(p, '(')
 		&& identifier_list(p)
 		&& eat_token(p, ')')) { return 1; }
 
 	RESTORE(p);
-	if (direct_declarator(p) 
-		&& eat_token(p, '(')
+	if (eat_token(p, '(')
 		&& eat_token(p, ')')) { return 1; }
 
 	RESTORE(p);
 	return 0;
+
+}
+
+int direct_declarator(parse_ctx *p)
+{
+	if(!direct_declarator_head(p)) return 0;
+	while(direct_declarator_tail(p)) { }
+
+	return 1;
 }
 
 int identifier_list(parse_ctx *p)
@@ -650,7 +756,6 @@ int initializer (parse_ctx *p)
 int constant_expression(parse_ctx *p)
 {
 	// TODO add constraints!
-	assert(0);
 	return conditional_expression(p);
 }
 
@@ -717,7 +822,7 @@ int struct_declaration(parse_ctx *p)
 
 	RESTORE(p);
 	if (specifier_qualifier_list(p)
-		&& struct_declaration_list(p)
+		&& struct_declarator_list(p)
 		&& eat_token(p, ';')) {return 1;}
 
 	RESTORE(p);
@@ -752,6 +857,7 @@ int enum_specifier(parse_ctx *p)
 
 		return 1;
 	}
+	return 0;
 }
 
 int enumerator_list(parse_ctx *p)
@@ -817,10 +923,8 @@ int abstract_declarator(parse_ctx *p)
 	return direct_abstract_declarator(p);
 }
 
-
-int direct_abstract_declarator(parse_ctx *p)
+int direct_abstract_declarator_head(parse_ctx *p)
 {
-	assert(0); // TODO this function will infinite loop
 	SAVE(p);
 
 	if (eat_token(p, '(') 
@@ -828,81 +932,52 @@ int direct_abstract_declarator(parse_ctx *p)
 		&& eat_token(p, ')')) {  return 1; }
 
 	RESTORE(p);
-	if (eat_token(p, '(') 
-		&& parameter_type_list(p)
-		&& eat_token(p, ')')) {  return 1; }
+	return 0; 
+}
+
+int direct_abstract_declarator_tail(parse_ctx *p)
+{
+	SAVE(p);
+	if (eat_token(p, '[')
+		&& OPTIONAL(type_qualifier_list(p))
+		&& OPTIONAL(assignment_expression(p))
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& eat_identifier(p, "static")
+		&& OPTIONAL(type_qualifier_list(p))
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& type_qualifier_list(p)
+		&& eat_identifier(p, "static")
+		&& assignment_expression(p)
+		&& eat_token(p, ']')) {  return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '[')
+		&& eat_token(p, '*')
+		&& eat_token(p, ']')) {  return 1; }
 
 	RESTORE(p);
 	if (eat_token(p, '(')
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p) 
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& type_qualifier_list(p) 
-		&& OPTIONAL( 
-			OPTIONAL(eat_identifier(p, "static")) 
-			&& assignment_expression(p) )
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& type_qualifier_list(p)
-		&& OPTIONAL( 
-			OPTIONAL(eat_identifier(p, "static"))
-			&& assignment_expression(p) )
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '[')
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '(')
-		&& parameter_type_list(p)
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESTORE(p);
-	if (direct_abstract_declarator(p)
-		&& eat_token(p, '(')
+		&& OPTIONAL(parameter_type_list(p))
 		&& eat_token(p, ')')) {  return 1; }
 
 	RESTORE(p);
 	return 0;
+
+}
+
+int direct_abstract_declarator(parse_ctx *p)
+{
+	int did_consume_some_input = direct_abstract_declarator_head(p);
+	while(direct_abstract_declarator_tail(p)) { did_consume_some_input = 1;}	
+
+	return did_consume_some_input;
 }
 
 int struct_declarator_list(parse_ctx *p)
@@ -1277,35 +1352,11 @@ int unary_expression(parse_ctx *p)
 	return 0;
 }
 
-int postfix_expression(parse_ctx *p)
+int postfix_expression_head(parse_ctx *p)
 {
-	assert(0); // this function will infinite loop TODO fix
-
 	if (primary_expression(p)) { return 1; }
 	
 	SAVE(p);
-
-	if (postfix_expression(p)
-		&& eat_token(p, '[')
-		&& expression(p)
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (postfix_expression(p)
-		&& eat_token(p, '(')
-		&& OPTIONAL(argument_expression_list(p))
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if (postfix_expression(p)
-		&& (eat_token(p,'.') || eat_token(p, CLEX_arrow))
-		&& identifier(p)) { return 1; }
-
-	RESTORE(p);
-	if (postfix_expression(p)
-		&& (eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus))) { return 1; }
-
-	RESTORE(p);
 	if (eat_token(p, '(')
 		&& type_name(p)
 		&& eat_token(p, ')')
@@ -1316,6 +1367,37 @@ int postfix_expression(parse_ctx *p)
 
 	RESTORE(p);
 	return 0;
+}
+
+
+int postfix_expression_tail(parse_ctx *p)
+{
+	SAVE(p);
+	if (eat_token(p, '[')
+		&& expression(p)
+		&& eat_token(p, ']')) { return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, '(')
+		&& OPTIONAL(argument_expression_list(p))
+		&& eat_token(p, ')')) { return 1; }
+
+	RESTORE(p);
+	if ((eat_token(p,'.') || eat_token(p, CLEX_arrow))
+		&& identifier(p)) { return 1; }
+
+	RESTORE(p);
+	if (eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus)) { return 1; }
+
+	RESTORE(p);
+	return 0;
+}
+
+int postfix_expression(parse_ctx *p)
+{
+	if(!postfix_expression_head(p)){return 0;}
+	while(postfix_expression_tail(p)) { }
+	return 1;
 }
 
 int unary_operator(parse_ctx *p)
@@ -1631,30 +1713,39 @@ int identifier(parse_ctx *p)
 	==========================================================
 */
 
+#ifdef _WIN32
+#define popen(x,y) _popen(x,y)
+#define pclose(x) _pclose(x)
+#endif
 
 int 
-main (const char *filetext, char *argv[])
+main (int argc, char *argv[])
 {
+	(void)argc;
 	
 	/*
 		Figure out what file we're asked to work on
 		if -f flag is supplied, obey that, 
 		else use stdin
 	*/
-	
+
 	char *filename = 0;
 	char **arg = argv;
 	while(*(++arg)) {
 		if (!strcmp("-f",*arg)) {
-			if(!++arg) die("got -f flag but no filename follows");
+			if(!++arg) die(0, "got -f flag but no filename follows");
 			filename = *arg;
 		}
 	}
-	
+
+	if(filename) die(0,"-f flag not yet implemented");
+
 	FILE *f = stdin;
 	if(filename) {
+
 		f = fopen(filename, "rb");
-		if(!f) die("couldn't open '%s'", filename);
+		if(!f) die(0,"couldn't open '%s'", filename);
+
 	}
 	
 	/*
@@ -1676,14 +1767,14 @@ main (const char *filetext, char *argv[])
 	};
 	int ntok = 0;
 	
-	if(!(text && string_store && tokens && stringtable.ht)) die("out of mem");
+	if(!(text && string_store && tokens && stringtable.ht)) die(0,"out of mem");
 	
 	/*
 		Read input file
 	*/
 	
 	long long len = fread(text, 1, 1<<27, f);
-	if(len == (1<<27)) die("input file too long");
+	if(len == (1<<27)) die(0,"input file too long");
 	fclose(f);
 	
 	/*
@@ -1739,7 +1830,7 @@ main (const char *filetext, char *argv[])
 				if (!(lex.token >= 0 && lex.token < 256)) {
 					stb_lex_location loc = {0};
 					stb_c_lexer_get_location(&lex, lex.where_firstchar, &loc);
-					die("Lex error at line %i, character %i: unknown token %ld", loc.line_number, loc.line_offset, lex.token);
+					die(0,"Lex error at line %i, character %i: unknown token %ld", loc.line_number, loc.line_offset, lex.token);
 				}
 				break;
 		}		
@@ -1751,11 +1842,10 @@ main (const char *filetext, char *argv[])
 		Run parser on token array.
 	*/
 
-	long delimiterstack[4096];
-	
 	parse_ctx p = {
-		.tokens      =  tokens,
-		.tokens_end  =  tokens+ntok,
+		.tokens_first  =   tokens,
+		.tokens        =   tokens,
+		.tokens_end    =   tokens+ntok,
 	};
 
 	translation_unit(p);

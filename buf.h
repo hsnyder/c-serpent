@@ -1,8 +1,8 @@
 /* buf.h --- growable memory buffers for C99
  * This is free and unencumbered software released into the public domain.
  *
- *   buf_size(v)     : return the number of elements in the buffer (size_t)
- *   buf_capacity(v) : return the total capacity of the buffer (size_t)
+ *   buf_size(v)     : return the number of elements in the buffer (long long)
+ *   buf_capacity(v) : return the total capacity of the buffer (long long)
  *   buf_free(v)     : destroy and free the buffer
  *   buf_push(v, e)  : append an element E to the end
  *   buf_pop(v)      : remove and return an element E from the end
@@ -17,9 +17,9 @@
  * Example usage:
  *
  *     float *values = 0;
- *     for (size_t i = 0; i < 25; i++)
+ *     for (long long i = 0; i < 25; i++)
  *         buf_push(values, rand() / (float)RAND_MAX);
- *     for (size_t i = 0; i < buf_size(values); i++)
+ *     for (long long i = 0; i < buf_size(values); i++)
  *         printf("values[%zu] = %f\n", i, values[i]);
  *     buf_free(values);
  */
@@ -35,8 +35,8 @@
 #endif
 
 struct buf {
-    size_t capacity;
-    size_t size;
+    long long capacity;
+    long long size;
     char buffer[];
 };
 
@@ -82,10 +82,10 @@ struct buf {
 
 
 static void *
-buf_grow1(void *v, size_t esize, ptrdiff_t n)
+buf_grow1(void *v, long long esize, ptrdiff_t n)
 {
     struct buf *p;
-    size_t max = (size_t)-1 - sizeof(struct buf);
+    long long max = (size_t)-1 - sizeof(struct buf);
     if (v) {
         p = buf_ptr(v);
         if (n > 0 && p->capacity + n > max / esize)
@@ -97,7 +97,7 @@ buf_grow1(void *v, size_t esize, ptrdiff_t n)
         if (p->size > p->capacity)
             p->size = p->capacity;
     } else {
-        if ((size_t)n > max / esize)
+        if ((long long)n > max / esize)
             goto fail; /* overflow */
         p = malloc(sizeof(struct buf) + esize * n);
         if (!p)
