@@ -12,7 +12,9 @@
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
 
-typedef struct {
+
+typedef struct { // lexer token
+
 	long toktype; // this will be one of the enum values in stb_c_lexer
 	int string_len;
 	union {
@@ -20,24 +22,101 @@ typedef struct {
 		long long int_number;
 		char * string;
 	};
-} token;
+} Token;
 
+typedef enum {
+	TC_BUILTIN = 0,
+	TC_STRUCT = 1,
+	TC_UNION = 2,
+	TC_ENUM = 3,
+} TypeCategory;
 
-typedef struct {
+typedef enum {
+	TQ_CONST = 1,
+	TQ_RESTRICT = 1<<1,
+	TQ_VOLATILE = 1<<2,
+	TQ_ATOMIC   = 1<<3,
+	TQ_POINTER  = 1<<4,
+} TypeQualifier;
+
+typedef struct type{
+	char *name;
+	int name_len;
+	TypeCategory category;
+	TypeQualifier qualifiers;
+	struct type *base;
+} Type; 
+
+enum builtin_types {
+	BT_VOID,
+	BT_BOOL,
+	BT_CHAR,
+	BT_SCHAR,
+	BT_UCHAR,
+	BT_SHORT,
+	BT_USHORT,
+	BT_INT,
+	BT_UINT,
+	BT_LONG,
+	BT_ULONG,
+	BT_LONGLONG,
+	BT_ULONGLONG,
+	BT_FLOAT,
+	BT_FLOAT_IMAG,
+	BT_FLOAT_COMPLEX,
+	BT_DOUBLE,
+	BT_DOUBLE_IMAG,
+	BT_DOUBLE_COMPLEX,
+	BT_LONGDOUBLE,
+	BT_LONGDOUBLE_IMAG,
+	BT_LONGDOUBLE_COMPLEX,
+};
+
+Type builtin_types[] = {
+	[BT_VOID]       =  {.name="void",  .name_len=4, },
+	[BT_BOOL]       =  {.name="_Bool", .name_len=5, },
+
+	[BT_CHAR]       =  {.name="char",               .name_len=4,  },
+	[BT_SCHAR]      =  {.name="signed char",        .name_len=11, },
+	[BT_UCHAR]      =  {.name="unsigned char",      .name_len=13, },
+	[BT_SHORT]      =  {.name="signed short",       .name_len=12, },
+	[BT_USHORT]     =  {.name="unsigned short",     .name_len=14, },
+	[BT_INT]        =  {.name="signed int",         .name_len=10, },
+	[BT_UINT]       =  {.name="unsigned int",       .name_len=12, },
+	[BT_LONG]       =  {.name="signed long",        .name_len=11, },
+	[BT_ULONG]      =  {.name="unsigned long",      .name_len=13, },
+	[BT_LONGLONG]   =  {.name="signed long long",   .name_len=18, },
+	[BT_ULONGLONG]  =  {.name="unsigned long long", .name_len=20, },
+
+	[BT_FLOAT]               =  {.name="float",                  .name_len=5,  },
+	[BT_FLOAT_IMAG]          =  {.name="float _Imaginary",       .name_len=16, },
+	[BT_FLOAT_COMPLEX]       =  {.name="float _Complex",         .name_len=14, },
+	[BT_DOUBLE]              =  {.name="double",                 .name_len=6,  },
+	[BT_DOUBLE_IMAG]         =  {.name="double _Imaginary",      .name_len=17, },
+	[BT_DOUBLE_COMPLEX]      =  {.name="double _Complex",        .name_len=15, },
+	[BT_LONGDOUBLE]          =  {.name="long double",            .name_len=11, },
+	[BT_LONGDOUBLE_IMAG]     =  {.name="long double _Imaginary", .name_len=22, },
+	[BT_LONGDOUBLE_COMPLEX]  =  {.name="long double _Complex",   .name_len=20, },
+
+};
+
+typedef struct { 
 	int sym_len;
 	char *symbol;
-} typedef_entry;
+
+	Type *t;
+} TypedefEntry;
 
 typedef struct {
-	typedef_entry *td;	
-} typedef_table;
+	TypedefEntry *td;	
+} TypedefTable;
 
 typedef struct {
-	token     *tokens;   
-	token     *tokens_end;
-	token     *tokens_first;   
-	typedef_table     ttab;
-} parse_ctx;
+	Token     *tokens;   
+	Token     *tokens_end;
+	Token     *tokens_first;   
+	TypedefTable     ttab;
+} ParseCtx;
 
 /*
 	==========================================================
@@ -49,11 +128,11 @@ typedef struct {
 
 #define OPTIONAL(x) ((x), 1)
 #define RESTORE(p)  (*p = p_saved);
-#define SAVE(p) parse_ctx p_saved = *p; 
+#define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
-static void repr_token(int bufsz, char buf[], token t)
+static void repr_token(int bufsz, char buf[], Token t)
 {
 	switch (t.toktype) {
 		case CLEX_id        : snprintf(buf, bufsz,"%s", t.string); break;
@@ -94,7 +173,7 @@ static void repr_token(int bufsz, char buf[], token t)
 	}
 }
 
-void dump_context(FILE *f, parse_ctx *p)
+void dump_context(FILE *f, ParseCtx *p)
 {
 	long long before = MIN(p->tokens - p->tokens_first, 20); 
 	long long after  = MIN(p->tokens_end - p->tokens, 20);
@@ -113,7 +192,7 @@ void dump_context(FILE *f, parse_ctx *p)
 
 
 _Noreturn void
-die (parse_ctx *p, const char * fmt, ...)
+die (ParseCtx *p, const char * fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
@@ -185,14 +264,26 @@ int32_t ht_lookup(uint64_t hash, int exp, int32_t idx)
 
 char *strdup_len_or_die(char * str, int len)
 {
+	if(len == 0) len = strlen(str);
 	char *x = malloc(len+1);
 	if(!x) die(0, "strdup_len_or_die: out of memory");
 	memcpy(x,str,len+1);
 	return x;
 }
 
-char *intern(struct ht *t, char *key, int keylen)
+char *intern(char *key, int keylen)
 {
+	// NOTE/TODO not thread safe (fine in this application) 
+	
+	static char *stringheap[1<<28] = {0};
+	static struct ht stringtable = {
+		.ht = stringheap,
+		.exp = 28,
+	};
+
+	struct ht *t = &stringtable;
+
+	if (keylen == 0) keylen = strlen(key);
 	uint64_t h = hash(key, keylen+1);
 	for (int32_t i = h;;) {
 		i = ht_lookup(h, t->exp, i);
@@ -214,7 +305,7 @@ char *intern(struct ht *t, char *key, int keylen)
 
 #include "buf.h"
 
-int check_typedef(parse_ctx *p, char *symbol, int sym_len)
+int check_typedef(ParseCtx *p, char *symbol, int sym_len)
 {
 	assert(symbol);
 	if (sym_len < 1) sym_len = strlen(symbol);
@@ -225,19 +316,55 @@ int check_typedef(parse_ctx *p, char *symbol, int sym_len)
 	return 0;
 }
 
-void add_typedef(parse_ctx *p, char *symbol, int sym_len)
+void add_typedef(ParseCtx *p, char *symbol, int sym_len)
 {
 	assert(symbol);
 	if (sym_len < 1) sym_len = strlen(symbol);
 
 	if(!check_typedef(p, symbol, sym_len))
 		buf_push(p->ttab.td, 
-			((typedef_entry){
+			((TypedefEntry){
 				.sym_len = sym_len,
-				.symbol  = strdup_len_or_die(symbol, sym_len),
+				.symbol  = intern(symbol, sym_len),
 			}));
 }
 
+
+static char * prepend_word(char *base, char *word)
+{
+	assert(base || word);
+	char buf[100] = {0};
+
+	if (base) {
+		assert(sizeof(buf) > snprintf(buf, sizeof(buf), "%s %s", word, base));
+		return intern(buf, 0);
+	}
+	return intern(word, 0);
+}
+
+static char * append_word(char *base, char *word)
+{
+	assert(base || word);
+	char buf[100] = {0};
+
+	if (base) {
+		assert(sizeof(buf) > snprintf(buf, sizeof(buf), "%s %s", base, word));
+		return intern(buf, 0);
+	}
+	return intern(word, 0);
+
+}
+
+static Type *find_builtin_type(char *name)
+{
+	int name_len = strlen(name);
+	for(int i = 0 ; i < COUNT_ARRAY(builtin_types); i++)
+	{
+		if (name_len == builtin_types[i].name_len  &&  memcmp(name,builtin_types[i].name,name_len)) return &builtin_types[i];
+	}
+
+	die(0, "No such built-in type: %s", name);
+}
 
 /*
 	==========================================================
@@ -246,7 +373,7 @@ void add_typedef(parse_ctx *p, char *symbol, int sym_len)
 */
 
 
-int eat_identifier(parse_ctx *p, const char *id)
+int eat_identifier(ParseCtx *p, const char *id)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype != CLEX_id) return 0;
@@ -258,7 +385,7 @@ int eat_identifier(parse_ctx *p, const char *id)
 	return 0;
 }
 
-int eat_token(parse_ctx *p, long toktype)
+int eat_token(ParseCtx *p, long toktype)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == toktype) {
@@ -272,92 +399,92 @@ int eat_token(parse_ctx *p, long toktype)
 // -----------------------------------------------------------------------
 
 
-int external_declaration(parse_ctx *p);
-int function_definition(parse_ctx *p);
-int declaration(parse_ctx *p);
-int declaration_specifiers(parse_ctx *p);
-int declaration_specifier(parse_ctx *p);
-int declarator(parse_ctx *p);
-int declaration_list(parse_ctx *p);
-int compound_statement(parse_ctx *p);
-int declaration_or_statement(parse_ctx *p);
-int init_declarator_list(parse_ctx *p);
-int init_declarator(parse_ctx *p);
-int static_assert_declaration(parse_ctx *p);
-int storage_class_specifier(parse_ctx *p);
-int type_specifier(parse_ctx *p);
-int typedef_name(parse_ctx *p);
-int type_qualifier(parse_ctx *p);
-int function_specifier(parse_ctx *p);
-int alignment_specifier(parse_ctx *p);
-int pointer(parse_ctx *p);
-int direct_declarator(parse_ctx *p);
-int identifier_list(parse_ctx *p);
-int initializer_list(parse_ctx *p);
-int designative_initializer(parse_ctx *p);
-int initializer(parse_ctx *p);
-int constant_expression(parse_ctx *p);
-int atomic_type_specifier(parse_ctx *p);
-int struct_or_union_specifier(parse_ctx *p);
-int struct_or_union(parse_ctx *p);
-int struct_declaration_list(parse_ctx *p);
-int struct_declarator_list(parse_ctx *p);
-int struct_declaration(parse_ctx *p);
-int enum_specifier(parse_ctx *p);
-int enumerator_list(parse_ctx *p);
-int enumerator(parse_ctx *p);
-int enumeration_constant(parse_ctx *p);
-int type_name(parse_ctx *p);
-int specifier_qualifier_list(parse_ctx *p);
-int specifier_qualifier(parse_ctx *p);
-int abstract_declarator(parse_ctx *p);
-int direct_abstract_declarator(parse_ctx *p);
-int type_qualifier_list(parse_ctx *p);
-int parameter_type_list(parse_ctx *p);
-int struct_declarator(parse_ctx *p);
-int assignment_operator(parse_ctx *p);
-int parameter_list(parse_ctx *p);
-int parameter_declaration(parse_ctx *p);
-int expression(parse_ctx *p);
-int assignment_expression(parse_ctx *p);
-int conditional_expression(parse_ctx *p);
-int logical_or_expression(parse_ctx *p);
-int logical_and_expression(parse_ctx *p);
-int inclusive_or_expression(parse_ctx *p);
-int exclusive_or_expression(parse_ctx *p);
-int and_expression(parse_ctx *p);
-int equality_expression(parse_ctx *p);
-int relational_expression(parse_ctx *p);
-int shift_expression(parse_ctx *p);
-int additive_expression(parse_ctx *p);
-int multiplicative_expression(parse_ctx *p);
-int cast_expression(parse_ctx *p);
-int unary_expression(parse_ctx *p);
-int postfix_expression(parse_ctx *p);
-int unary_operator(parse_ctx *p);
-int primary_expression(parse_ctx *p);
-int argument_expression_list(parse_ctx *p);
-int constant(parse_ctx *p);
-int string(parse_ctx *p);
-int generic_selection(parse_ctx *p);
-int generic_assoc_list(parse_ctx *p);
-int generic_association(parse_ctx *p);
-int designation(parse_ctx *p);
-int designator_list(parse_ctx *p);
-int designator(parse_ctx *p);
-int statement(parse_ctx *p);
-int labeled_statement(parse_ctx *p);
-int labeled_statement(parse_ctx *p);
-int expression_statement(parse_ctx *p);
-int selection_statement(parse_ctx *p);
-int iteration_statement(parse_ctx *p);
-int jump_statement(parse_ctx *p);
+int external_declaration(ParseCtx *p);
+int function_definition(ParseCtx *p);
+int declaration(ParseCtx *p);
+int declaration_specifiers(ParseCtx *p);
+int declaration_specifier(ParseCtx *p);
+int declarator(ParseCtx *p);
+int declaration_list(ParseCtx *p);
+int compound_statement(ParseCtx *p);
+int declaration_or_statement(ParseCtx *p);
+int init_declarator_list(ParseCtx *p);
+int init_declarator(ParseCtx *p);
+int static_assert_declaration(ParseCtx *p);
+int storage_class_specifier(ParseCtx *p);
+int type_specifier(ParseCtx *p);
+int typedef_name(ParseCtx *p);
+int type_qualifier(ParseCtx *p);
+int function_specifier(ParseCtx *p);
+int alignment_specifier(ParseCtx *p);
+int pointer(ParseCtx *p);
+int direct_declarator(ParseCtx *p);
+int identifier_list(ParseCtx *p);
+int initializer_list(ParseCtx *p);
+int designative_initializer(ParseCtx *p);
+int initializer(ParseCtx *p);
+int constant_expression(ParseCtx *p);
+int atomic_type_specifier(ParseCtx *p);
+int struct_or_union_specifier(ParseCtx *p);
+int struct_or_union(ParseCtx *p);
+int struct_declaration_list(ParseCtx *p);
+int struct_declarator_list(ParseCtx *p);
+int struct_declaration(ParseCtx *p);
+int enum_specifier(ParseCtx *p);
+int enumerator_list(ParseCtx *p);
+int enumerator(ParseCtx *p);
+int enumeration_constant(ParseCtx *p);
+int type_name(ParseCtx *p);
+int specifier_qualifier_list(ParseCtx *p);
+int specifier_qualifier(ParseCtx *p);
+int abstract_declarator(ParseCtx *p);
+int direct_abstract_declarator(ParseCtx *p);
+int type_qualifier_list(ParseCtx *p);
+int parameter_type_list(ParseCtx *p);
+int struct_declarator(ParseCtx *p);
+int assignment_operator(ParseCtx *p);
+int parameter_list(ParseCtx *p);
+int parameter_declaration(ParseCtx *p);
+int expression(ParseCtx *p);
+int assignment_expression(ParseCtx *p);
+int conditional_expression(ParseCtx *p);
+int logical_or_expression(ParseCtx *p);
+int logical_and_expression(ParseCtx *p);
+int inclusive_or_expression(ParseCtx *p);
+int exclusive_or_expression(ParseCtx *p);
+int and_expression(ParseCtx *p);
+int equality_expression(ParseCtx *p);
+int relational_expression(ParseCtx *p);
+int shift_expression(ParseCtx *p);
+int additive_expression(ParseCtx *p);
+int multiplicative_expression(ParseCtx *p);
+int cast_expression(ParseCtx *p);
+int unary_expression(ParseCtx *p);
+int postfix_expression(ParseCtx *p);
+int unary_operator(ParseCtx *p);
+int primary_expression(ParseCtx *p);
+int argument_expression_list(ParseCtx *p);
+int constant(ParseCtx *p);
+int string(ParseCtx *p);
+int generic_selection(ParseCtx *p);
+int generic_assoc_list(ParseCtx *p);
+int generic_association(ParseCtx *p);
+int designation(ParseCtx *p);
+int designator_list(ParseCtx *p);
+int designator(ParseCtx *p);
+int statement(ParseCtx *p);
+int labeled_statement(ParseCtx *p);
+int labeled_statement(ParseCtx *p);
+int expression_statement(ParseCtx *p);
+int selection_statement(ParseCtx *p);
+int iteration_statement(ParseCtx *p);
+int jump_statement(ParseCtx *p);
 
-int string_literal(parse_ctx *p);
-int integer_constant(parse_ctx *p);
-int character_constant(parse_ctx *p);
-int floating_constant(parse_ctx *p);
-int identifier(parse_ctx *p);
+int string_literal(ParseCtx *p);
+int integer_constant(ParseCtx *p);
+int character_constant(ParseCtx *p);
+int floating_constant(ParseCtx *p);
+int identifier(ParseCtx *p);
 
 
 
@@ -365,7 +492,7 @@ int identifier(parse_ctx *p);
 
 
 
-void translation_unit(parse_ctx p)
+void translation_unit(ParseCtx p)
 {
 	while(p.tokens < p.tokens_end) {
 		if(!external_declaration(&p)) 
@@ -373,12 +500,12 @@ void translation_unit(parse_ctx p)
 	}
 }
 
-int external_declaration (parse_ctx *p) 
+int external_declaration (ParseCtx *p) 
 {
 	return function_definition(p) || declaration(p);
 }
 
-int function_definition(parse_ctx *p) 
+int function_definition(ParseCtx *p) 
 {
 	SAVE(p);
 
@@ -391,7 +518,7 @@ int function_definition(parse_ctx *p)
 	return match;
 }
 
-int declaration(parse_ctx *p)
+int declaration(ParseCtx *p)
 {
 	SAVE(p);
 	if (declaration_specifiers(p)
@@ -406,14 +533,14 @@ int declaration(parse_ctx *p)
 	return 0;
 }
 
-int declaration_specifiers(parse_ctx *p) 
+int declaration_specifiers(ParseCtx *p) 
 {
 	int match = declaration_specifier(p);
 	if(match) while (declaration_specifier(p));
 	return match;
 }
 
-int declaration_specifier(parse_ctx *p)
+int declaration_specifier(ParseCtx *p)
 {
 	return storage_class_specifier(p) 
 	|| type_specifier(p)
@@ -422,20 +549,20 @@ int declaration_specifier(parse_ctx *p)
 	|| alignment_specifier(p);
 }
 
-int declarator(parse_ctx *p) 
+int declarator(ParseCtx *p) 
 {
 	(void) pointer(p);
 	return direct_declarator(p);
 }
 
-int declaration_list(parse_ctx *p)
+int declaration_list(ParseCtx *p)
 {
 	int match = declaration(p);
 	if(match) while(declaration(p)){}
 	return match;
 }
 
-int compound_statement(parse_ctx *p)
+int compound_statement(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -447,12 +574,12 @@ int compound_statement(parse_ctx *p)
 	return match;
 }
 
-int declaration_or_statement(parse_ctx *p)
+int declaration_or_statement(ParseCtx *p)
 {
 	return declaration(p) || statement(p);
 }
 
-int init_declarator_list(parse_ctx *p)
+int init_declarator_list(ParseCtx *p)
 {
 	int match = init_declarator(p);
 
@@ -469,7 +596,7 @@ int init_declarator_list(parse_ctx *p)
 	return match;
 }
 
-int init_declarator(parse_ctx *p)
+int init_declarator(ParseCtx *p)
 {
 	int match = declarator(p);
 	if (match) {
@@ -482,7 +609,7 @@ int init_declarator(parse_ctx *p)
 	
 }
 
-int static_assert_declaration(parse_ctx *p)
+int static_assert_declaration(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -498,7 +625,7 @@ int static_assert_declaration(parse_ctx *p)
 	return match;
 }
 
-int storage_class_specifier(parse_ctx *p)
+int storage_class_specifier(ParseCtx *p)
 {
 	int match = eat_identifier(p, "typedef")
 	|| eat_identifier(p, "extern")
@@ -516,7 +643,7 @@ int storage_class_specifier(parse_ctx *p)
 	return match;
 }
 
-int type_specifier(parse_ctx *p)
+int type_specifier(ParseCtx *p)
 {
 	if(p->tokens == p->tokens_end) return 0;
 
@@ -550,7 +677,7 @@ int type_specifier(parse_ctx *p)
 	return 0;
 }
 
-int typedef_name(parse_ctx *p)
+int typedef_name(ParseCtx *p)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == CLEX_id) {
@@ -563,7 +690,7 @@ int typedef_name(parse_ctx *p)
 	return 0;
 }
 
-int type_qualifier(parse_ctx *p)
+int type_qualifier(ParseCtx *p)
 {
 	int match = eat_identifier(p, "const")
 	|| eat_identifier(p, "restrict")
@@ -579,7 +706,7 @@ int type_qualifier(parse_ctx *p)
 	return match;
 }
 
-int function_specifier(parse_ctx *p)
+int function_specifier(ParseCtx *p)
 {
 	int match = eat_identifier(p, "inline")
 	|| eat_identifier(p, "_Noreturn");
@@ -593,7 +720,7 @@ int function_specifier(parse_ctx *p)
 	return match;
 }
 
-int alignment_specifier(parse_ctx *p)
+int alignment_specifier(ParseCtx *p)
 {
 	SAVE(p);
 	
@@ -612,7 +739,7 @@ int alignment_specifier(parse_ctx *p)
 	return 0;
 }
 
-int pointer(parse_ctx *p)
+int pointer(ParseCtx *p)
 {
 	int match = eat_token(p, '*');
 	if (match) {
@@ -622,7 +749,7 @@ int pointer(parse_ctx *p)
 	return match;
 }
 
-int direct_declarator_head(parse_ctx *p) 
+int direct_declarator_head(ParseCtx *p) 
 {
 	SAVE(p);
 
@@ -636,7 +763,7 @@ int direct_declarator_head(parse_ctx *p)
 	return 0;
 }
 
-int direct_declarator_tail(parse_ctx *p) 
+int direct_declarator_tail(ParseCtx *p) 
 {
 	SAVE(p);
 
@@ -688,7 +815,7 @@ int direct_declarator_tail(parse_ctx *p)
 
 }
 
-int direct_declarator(parse_ctx *p)
+int direct_declarator(ParseCtx *p)
 {
 	if(!direct_declarator_head(p)) return 0;
 	while(direct_declarator_tail(p)) { }
@@ -696,7 +823,7 @@ int direct_declarator(parse_ctx *p)
 	return 1;
 }
 
-int identifier_list(parse_ctx *p)
+int identifier_list(ParseCtx *p)
 {
 	int match = identifier(p);
 
@@ -713,7 +840,7 @@ int identifier_list(parse_ctx *p)
 	return match;
 }
 
-int initializer_list(parse_ctx *p)
+int initializer_list(ParseCtx *p)
 {
 	int match = designative_initializer(p);
 
@@ -730,13 +857,13 @@ int initializer_list(parse_ctx *p)
 	return match;
 }
 
-int designative_initializer(parse_ctx *p)
+int designative_initializer(ParseCtx *p)
 {
 	(void) designation(p);
 	return initializer(p);
 }
 
-int initializer (parse_ctx *p)
+int initializer (ParseCtx *p)
 {
 	SAVE(p);
 
@@ -750,13 +877,13 @@ int initializer (parse_ctx *p)
 	return assignment_expression(p);
 }
 
-int constant_expression(parse_ctx *p)
+int constant_expression(ParseCtx *p)
 {
 	// TODO add constraints!
 	return conditional_expression(p);
 }
 
-int atomic_type_specifier(parse_ctx *p)
+int atomic_type_specifier(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -770,7 +897,7 @@ int atomic_type_specifier(parse_ctx *p)
 	return match;
 }
 
-int struct_or_union_specifier(parse_ctx *p)
+int struct_or_union_specifier(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -797,19 +924,19 @@ int struct_or_union_specifier(parse_ctx *p)
 	return 0;
 }
 
-int struct_or_union(parse_ctx *p)
+int struct_or_union(ParseCtx *p)
 {
 	return eat_identifier(p, "struct") || eat_identifier(p, "union");
 }
 
-int struct_declaration_list(parse_ctx *p)
+int struct_declaration_list(ParseCtx *p)
 {
 	int match = struct_declaration(p);
 	if(match) while(struct_declaration(p)) { }
 	return match;
 }
 
-int struct_declaration(parse_ctx *p)
+int struct_declaration(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -829,7 +956,7 @@ int struct_declaration(parse_ctx *p)
 	return 0;
 }
 
-int enum_specifier(parse_ctx *p)
+int enum_specifier(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -857,7 +984,7 @@ int enum_specifier(parse_ctx *p)
 	return 0;
 }
 
-int enumerator_list(parse_ctx *p)
+int enumerator_list(ParseCtx *p)
 {
 	int match = enumerator(p);
 
@@ -874,7 +1001,7 @@ int enumerator_list(parse_ctx *p)
 	return match;
 }
 
-int enumerator(parse_ctx *p)
+int enumerator(ParseCtx *p)
 {
 	int match = enumeration_constant(p);
 	if(match) {
@@ -885,33 +1012,33 @@ int enumerator(parse_ctx *p)
 	return match;
 }
 
-int enumeration_constant(parse_ctx *p)
+int enumeration_constant(ParseCtx *p)
 {
 	// todo add some checking?
 	return identifier(p);
 }
 
-int type_name(parse_ctx *p)
+int type_name(ParseCtx *p)
 {
 	int match = specifier_qualifier_list(p);
 	if (match) { (void) abstract_declarator(p); }
 	return match;
 }
 
-int specifier_qualifier_list(parse_ctx *p)
+int specifier_qualifier_list(ParseCtx *p)
 {
 	int match = specifier_qualifier(p);
 	if(match) while(specifier_qualifier(p)){}
 	return match;
 }
 
-int specifier_qualifier(parse_ctx *p)
+int specifier_qualifier(ParseCtx *p)
 {
 	return type_specifier(p) || type_qualifier(p);
 }
 
 
-int abstract_declarator(parse_ctx *p)
+int abstract_declarator(ParseCtx *p)
 {
 	if (pointer(p)) {
 		(void) direct_abstract_declarator(p);
@@ -920,7 +1047,7 @@ int abstract_declarator(parse_ctx *p)
 	return direct_abstract_declarator(p);
 }
 
-int direct_abstract_declarator_head(parse_ctx *p)
+int direct_abstract_declarator_head(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -932,7 +1059,7 @@ int direct_abstract_declarator_head(parse_ctx *p)
 	return 0; 
 }
 
-int direct_abstract_declarator_tail(parse_ctx *p)
+int direct_abstract_declarator_tail(ParseCtx *p)
 {
 	SAVE(p);
 	if (eat_token(p, '[')
@@ -969,7 +1096,7 @@ int direct_abstract_declarator_tail(parse_ctx *p)
 
 }
 
-int direct_abstract_declarator(parse_ctx *p)
+int direct_abstract_declarator(ParseCtx *p)
 {
 	int did_consume_some_input = direct_abstract_declarator_head(p);
 	while(direct_abstract_declarator_tail(p)) { did_consume_some_input = 1;}	
@@ -977,7 +1104,7 @@ int direct_abstract_declarator(parse_ctx *p)
 	return did_consume_some_input;
 }
 
-int struct_declarator_list(parse_ctx *p)
+int struct_declarator_list(ParseCtx *p)
 {
 	int match = struct_declarator(p);
 
@@ -994,14 +1121,14 @@ int struct_declarator_list(parse_ctx *p)
 	return match;
 }
 
-int type_qualifier_list(parse_ctx *p)
+int type_qualifier_list(ParseCtx *p)
 {
 	int match = type_qualifier(p);
 	if(match) while(type_qualifier(p)) {}
 	return match;
 }
 
-int parameter_type_list(parse_ctx *p)
+int parameter_type_list(ParseCtx *p)
 {
 	int match = parameter_list(p);
 	if(match){
@@ -1016,7 +1143,7 @@ int parameter_type_list(parse_ctx *p)
 	return match;
 }
 
-int struct_declarator(parse_ctx *p)
+int struct_declarator(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1036,7 +1163,7 @@ int struct_declarator(parse_ctx *p)
 	return 0;
 }
 
-int assignment_operator(parse_ctx *p)
+int assignment_operator(ParseCtx *p)
 {
 	return eat_token(p, '=')
 	|| eat_token(p, CLEX_muleq)
@@ -1052,7 +1179,7 @@ int assignment_operator(parse_ctx *p)
 }
 
 
-int parameter_list(parse_ctx *p)
+int parameter_list(ParseCtx *p)
 {
 	int match = parameter_declaration(p);
 
@@ -1069,7 +1196,7 @@ int parameter_list(parse_ctx *p)
 	return match;
 }
 
-int parameter_declaration(parse_ctx *p)
+int parameter_declaration(ParseCtx *p)
 {
 	int match = declaration_specifiers(p);
 	if(match) {
@@ -1078,7 +1205,7 @@ int parameter_declaration(parse_ctx *p)
 	return match;
 }
 
-int expression(parse_ctx *p)
+int expression(ParseCtx *p)
 {
 	int match = assignment_expression(p);
 
@@ -1095,7 +1222,7 @@ int expression(parse_ctx *p)
 	return match;
 }
 
-int assignment_expression(parse_ctx *p) 
+int assignment_expression(ParseCtx *p) 
 {
 	if(conditional_expression(p)) return 1;
 
@@ -1109,7 +1236,7 @@ int assignment_expression(parse_ctx *p)
 	return 0;
 }
 
-int conditional_expression(parse_ctx *p)
+int conditional_expression(ParseCtx *p)
 {
 	int match = logical_or_expression(p);
 	if (match) {
@@ -1123,7 +1250,7 @@ int conditional_expression(parse_ctx *p)
 	return match;
 }
 
-int logical_or_expression(parse_ctx *p)
+int logical_or_expression(ParseCtx *p)
 {
 	int match = logical_and_expression(p);
 
@@ -1140,7 +1267,7 @@ int logical_or_expression(parse_ctx *p)
 	return match;
 }
 
-int logical_and_expression(parse_ctx *p)
+int logical_and_expression(ParseCtx *p)
 {
 	int match = inclusive_or_expression(p);
 
@@ -1157,7 +1284,7 @@ int logical_and_expression(parse_ctx *p)
 	return match;
 }
 
-int inclusive_or_expression(parse_ctx *p)
+int inclusive_or_expression(ParseCtx *p)
 {
 	int match = exclusive_or_expression(p);
 
@@ -1174,7 +1301,7 @@ int inclusive_or_expression(parse_ctx *p)
 	return match;
 }
 
-int exclusive_or_expression(parse_ctx *p)
+int exclusive_or_expression(ParseCtx *p)
 {
 	int match = and_expression(p);
 
@@ -1191,7 +1318,7 @@ int exclusive_or_expression(parse_ctx *p)
 	return match;
 }
 
-int and_expression(parse_ctx *p)
+int and_expression(ParseCtx *p)
 {
 	int match = equality_expression(p);
 
@@ -1208,7 +1335,7 @@ int and_expression(parse_ctx *p)
 	return match;
 }
 
-int equality_expression(parse_ctx *p)
+int equality_expression(ParseCtx *p)
 {
 	int match = relational_expression(p);
 
@@ -1227,7 +1354,7 @@ int equality_expression(parse_ctx *p)
 }
 
 
-int relational_expression(parse_ctx *p)
+int relational_expression(ParseCtx *p)
 {
 	int match = shift_expression(p);
 
@@ -1245,7 +1372,7 @@ int relational_expression(parse_ctx *p)
 	return match;
 }
 
-int shift_expression(parse_ctx *p)
+int shift_expression(ParseCtx *p)
 {
 	int match = additive_expression(p);
 
@@ -1264,7 +1391,7 @@ int shift_expression(parse_ctx *p)
 }
 
 
-int additive_expression(parse_ctx *p)
+int additive_expression(ParseCtx *p)
 {
 	int match = multiplicative_expression(p);
 
@@ -1283,7 +1410,7 @@ int additive_expression(parse_ctx *p)
 }
 
 
-int multiplicative_expression(parse_ctx *p)
+int multiplicative_expression(ParseCtx *p)
 {
 	int match = cast_expression(p);
 
@@ -1301,7 +1428,7 @@ int multiplicative_expression(parse_ctx *p)
 	return match;
 }
 
-int cast_expression(parse_ctx *p)
+int cast_expression(ParseCtx *p)
 {
 	if (unary_expression(p)) { return 1; }
 
@@ -1316,7 +1443,7 @@ int cast_expression(parse_ctx *p)
 	return 0;
 }
 
-int unary_expression(parse_ctx *p)
+int unary_expression(ParseCtx *p)
 {
 	if (postfix_expression(p)) { return 1; }
 
@@ -1349,7 +1476,7 @@ int unary_expression(parse_ctx *p)
 	return 0;
 }
 
-int postfix_expression_head(parse_ctx *p)
+int postfix_expression_head(ParseCtx *p)
 {
 	if (primary_expression(p)) { return 1; }
 	
@@ -1367,7 +1494,7 @@ int postfix_expression_head(parse_ctx *p)
 }
 
 
-int postfix_expression_tail(parse_ctx *p)
+int postfix_expression_tail(ParseCtx *p)
 {
 	SAVE(p);
 	if (eat_token(p, '[')
@@ -1390,14 +1517,14 @@ int postfix_expression_tail(parse_ctx *p)
 	return 0;
 }
 
-int postfix_expression(parse_ctx *p)
+int postfix_expression(ParseCtx *p)
 {
 	if(!postfix_expression_head(p)){return 0;}
 	while(postfix_expression_tail(p)) { }
 	return 1;
 }
 
-int unary_operator(parse_ctx *p)
+int unary_operator(ParseCtx *p)
 {
 	return eat_token(p, '&')
 	|| eat_token(p, '*')
@@ -1407,7 +1534,7 @@ int unary_operator(parse_ctx *p)
 	|| eat_token(p, '!');
 }
 
-int primary_expression(parse_ctx *p)
+int primary_expression(ParseCtx *p)
 {
 	if (identifier(p)) { return 1; } 
 
@@ -1426,7 +1553,7 @@ int primary_expression(parse_ctx *p)
 	return 0;
 }
 
-int argument_expression_list(parse_ctx *p)
+int argument_expression_list(ParseCtx *p)
 {
 	int match = assignment_expression(p);
 
@@ -1443,7 +1570,7 @@ int argument_expression_list(parse_ctx *p)
 	return match;
 }
 
-int constant(parse_ctx *p)
+int constant(ParseCtx *p)
 {
 	return integer_constant(p)
 	|| character_constant(p)
@@ -1451,14 +1578,14 @@ int constant(parse_ctx *p)
 	|| enumeration_constant(p);
 }
 
-int string(parse_ctx *p)
+int string(ParseCtx *p)
 {
 	return string_literal(p) 
 	|| eat_identifier(p, "__func__");
 }
 
 
-int generic_selection(parse_ctx *p)
+int generic_selection(ParseCtx *p)
 {
 	SAVE(p);
 	int match = eat_identifier(p, "_Generic")
@@ -1472,7 +1599,7 @@ int generic_selection(parse_ctx *p)
 	return match;
 }
 
-int generic_assoc_list(parse_ctx *p)
+int generic_assoc_list(ParseCtx *p)
 {
 	int match = generic_association(p);
 
@@ -1489,7 +1616,7 @@ int generic_assoc_list(parse_ctx *p)
 	return match;
 }
 
-int generic_association(parse_ctx *p)
+int generic_association(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1506,7 +1633,7 @@ int generic_association(parse_ctx *p)
 	return 0;
 }
 
-int designation(parse_ctx *p)
+int designation(ParseCtx *p)
 {
 	SAVE(p);
 	int match = designator_list(p)
@@ -1515,14 +1642,14 @@ int designation(parse_ctx *p)
 	return match;
 }
 
-int designator_list(parse_ctx *p)
+int designator_list(ParseCtx *p)
 {
 	int match = designator(p);
 	if(match) while(designator(p)) {}
 	return match;
 }
 
-int designator(parse_ctx *p)
+int designator(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1538,7 +1665,7 @@ int designator(parse_ctx *p)
 	return 0;
 }
 
-int statement(parse_ctx *p)
+int statement(ParseCtx *p)
 {
 	return labeled_statement(p)
 	|| compound_statement(p)
@@ -1548,7 +1675,7 @@ int statement(parse_ctx *p)
 	|| jump_statement(p);
 }
 
-int labeled_statement(parse_ctx *p)
+int labeled_statement(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1571,13 +1698,13 @@ int labeled_statement(parse_ctx *p)
 	return 0;
 }
 
-int expression_statement(parse_ctx *p)
+int expression_statement(ParseCtx *p)
 {
 	(void) expression(p);
 	return eat_token(p, ';');
 }
 
-int selection_statement(parse_ctx *p)
+int selection_statement(ParseCtx *p)
 {
 	SAVE(p);
 	
@@ -1607,7 +1734,7 @@ int selection_statement(parse_ctx *p)
 	return 0;
 }
 
-int iteration_statement(parse_ctx *p)
+int iteration_statement(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1651,7 +1778,7 @@ int iteration_statement(parse_ctx *p)
 	return 0;
 }
 
-int jump_statement(parse_ctx *p)
+int jump_statement(ParseCtx *p)
 {
 	SAVE(p);
 
@@ -1678,27 +1805,27 @@ int jump_statement(parse_ctx *p)
 
 
 
-int string_literal(parse_ctx *p)
+int string_literal(ParseCtx *p)
 {
 	return eat_token(p, CLEX_dqstring);
 }
 
-int integer_constant(parse_ctx *p)
+int integer_constant(ParseCtx *p)
 {
 	return eat_token(p, CLEX_intlit);
 }
 
-int character_constant(parse_ctx *p)
+int character_constant(ParseCtx *p)
 {
 	return eat_token(p, CLEX_charlit);
 }
 
-int floating_constant(parse_ctx *p)
+int floating_constant(ParseCtx *p)
 {
 	return eat_token(p, CLEX_floatlit);
 }
 
-int identifier(parse_ctx *p)
+int identifier(ParseCtx *p)
 {
 	return eat_token(p, CLEX_id);
 }
@@ -1757,14 +1884,11 @@ main (int argc, char *argv[])
 	
 	char  *text         = malloc(1<<27);
 	char  *string_store = malloc(0x10000);
-	token *tokens       = malloc((1<<27) * sizeof(*tokens));
-	struct ht stringtable = {
-		.ht = malloc((1<<28) * sizeof(char*)),
-		.exp = 28,
-	};
+	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
+
 	int ntok = 0;
 	
-	if(!(text && string_store && tokens && stringtable.ht)) die(0,"out of mem");
+	if(!(text && string_store && tokens)) die(0,"out of mem");
 	
 	/*
 		Read input file
@@ -1781,14 +1905,14 @@ main (int argc, char *argv[])
 	stb_lexer lex = {0};
 	stb_c_lexer_init(&lex, text, text+len, (char *) string_store, 0x10000);
 	while(stb_c_lexer_get_token(&lex)) {
-		token t = {.toktype = lex.token};
+		Token t = {.toktype = lex.token};
 		switch(lex.token)
 		{
 			case CLEX_id: 
 			case CLEX_dqstring:
 			case CLEX_sqstring: 		
 				t.string_len = strlen(lex.string);	
-				t.string = intern(&stringtable, lex.string, t.string_len);
+				t.string = intern(lex.string, t.string_len);
 				break;
 			case CLEX_charlit:
 				t.string = lex.string;
@@ -1839,7 +1963,7 @@ main (int argc, char *argv[])
 		Run parser on token array.
 	*/
 
-	parse_ctx p = {
+	ParseCtx p = {
 		.tokens_first  =   tokens,
 		.tokens        =   tokens,
 		.tokens_end    =   tokens+ntok,
