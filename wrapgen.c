@@ -23,38 +23,67 @@ typedef struct {
 } DeclarationSpecifierInfo;
 
 enum type_category {
-	T_VOID,
-	T_BOOL,
+	T_UNINITIALIZED = 0,
+	T_UNKNOWN,
 	T_CHAR,
 	T_SHORT,
 	T_INT,
 	T_LONG,
 	T_LLONG,
 	T_FLOAT,
-	T_IFLOAT,
-	T_CFLOAT,
 	T_DOUBLE,
-	T_IDOUBLE,
-	T_CDOUBLE,
 	T_LDOUBLE,
-	T_ILDOUBLE,
-	T_CLDOUBLE,
-	T_POINTER,
 	T_STRUCT,
 	T_UNION,
-	T_ARRAY,
-	T_FUNCTION,
+	T_VOID,
+	T_BOOL,
 };
 
-typedef struct type {
-	struct type *base;
-	enum type_category category;
+const char *type_category_strings[] = {
+	[T_UNINITIALIZED] = "<uninitialized>",
+	[T_UNKNOWN] = "<unknown>",
+	[T_VOID] = "void",
+	[T_BOOL] = "_Bool",
+	[T_CHAR] = "char",
+	[T_SHORT] = "short",
+	[T_INT] = "int",
+	[T_LONG] = "long",
+	[T_LLONG] = "long long",
+	[T_FLOAT] = "float",
+	[T_DOUBLE] = "double",
+	[T_LDOUBLE] = "long double",
+	[T_STRUCT] = "struct",
+	[T_UNION] = "union",
+}
 
-	short explicit_signed : 1;
-	short is_unsigned : 1;
-	short is_const : 1;
-	short is_restrict : 1;
-	short is_volatile : 1;
+typedef struct type {
+	enum type_category category;
+	unsigned short is_function : 1;
+	unsigned short is_unsigned : 1;
+	unsigned short explicit_signed : 1;
+	unsigned short is_imaginary : 1;
+	unsigned short is_complex : 1;
+
+	unsigned short is_array    : 1;
+	unsigned short is_const    : 1;
+	unsigned short is_restrict : 1;
+	unsigned short is_volatile : 1;
+	unsigned short is_pointer  : 1;
+
+	/*
+		If is_pointer is set, then look at pointer_levels[0].
+		If pointer_levels[0].is_pointer is set, then look at [1], etc.
+
+		We can only hold 3 levels of pointer in this type - sufficient for wrapgen.
+	*/
+
+	struct {
+		unsigned char is_array    : 1;
+		unsigned char is_const    : 1;
+		unsigned char is_restrict : 1;
+		unsigned char is_volatile : 1;
+		unsigned char is_pointer  : 1;
+       	} pointer_levels[3];
 } Type;
 
 typedef enum symbol_category {
@@ -101,6 +130,145 @@ typedef struct {
 #define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
+
+void modify_type_struct(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_STRUCT;
+	else die(p, "'struct' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_union(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_UNION;
+	else die(p, "'union' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_void(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+
+	if(s->type.is_unsigned)     die(p, "'void' does not make sense with 'unsigned'");
+	if(s->type.explicit_signed) die(p, "'void' does not make sense with 'signed'");
+	if(s->type.is_imaginary)     die(p, "'void' does not make sense with '_Imaginary'");
+	if(s->type.is_complex)       die(p, "'void' does not make sense with '_Complex'");
+
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_VOID;
+	else die(p, "'void' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_char(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_imaginary)     die(p, "'char' does not make sense with '_Imaginary'");
+	if(s->type.is_complex)       die(p, "'char' does not make sense with '_Complex'");
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_CHAR;
+	else die(p, "'char' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_short(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_imaginary)     die(p, "'short' does not make sense with '_Imaginary'");
+	if(s->type.is_complex)       die(p, "'short' does not make sense with '_Complex'");
+	if(s->type.category == T_UNINITIALIZED || s->type.category == T_INT) s->type.category = T_SHORT;
+	else die(p, "'short' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_int(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_imaginary)     die(p, "'int' does not make sense with '_Imaginary'");
+	if(s->type.is_complex)       die(p, "'int' does not make sense with '_Complex'");
+	if(s->type.category == T_SHORT 
+		|| s->type.category == T_LONG 
+		|| s->type.category = T_LLONG ) return;
+
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_INT;
+	else die(p, "'int' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_long(ParseCtx *p, Symbol *s) 
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_VOID;
+	else if (s->type.category == T_INT) s->type.category = T_LONG;
+	else if (s->type.category == T_LONG) s->type.category = T_LLONG;
+	else if (s->type.category == T_DOUBLE) s->type.category = T_LDOUBLE;
+	else die(p, "'long' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_float(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_unsigned)     die(p, "'float' does not make sense with 'unsigned'");
+	if(s->type.explicit_signed) die(p, "'float' does not make sense with 'signed'");
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_FLOAT;
+	else die(p, "'float' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_double(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_unsigned)     die(p, "'double' does not make sense with 'unsigned'");
+	if(s->type.explicit_signed) die(p, "'double' does not make sense with 'signed'");
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_DOUBLE;
+	if(s->type.category == T_LONG) s->type.category = T_LDOUBLE;
+	else die(p, "'double' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_signed(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category >= T_FLOAT) die(p, "'signed' doesn't make sense with non-integer types");
+	if(s->type.is_unsigned) die(p, "'signed' doesn't make sense with 'unsigned'");
+	s->type.explicit_signed = 1;
+}
+
+void modify_type_unsigned(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category >= T_FLOAT) die(p, "'unsigned' doesn't make sense with non-integer types");
+	if(s->type.is_unsigned) die(p, "'unsigned' doesn't make sense with 'signed'");
+	s->type.is_unsigned = 1;
+}
+
+void modify_type_bool(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category == T_UNKNOWN) return;
+	if(s->type.is_unsigned)     die(p, "'_Bool' does not make sense with 'unsigned'");
+	if(s->type.explicit_signed) die(p, "'_Bool' does not make sense with 'signed'");
+	if(s->type.category == T_UNINITIALIZED) s->type.category = T_BOOL;
+	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[s->type.category]);
+}
+
+void modify_type_complex(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category >= T_CHAR && T_s->type.category < T_FLOAT) die(p, "'_Complex' doesn't make sense with integer types");
+	if(s->type.is_imaginary) die(p, "'_Complex' doesn't make sense with '_Imaginary'");
+	s->type.is_complex = 1;
+}
+
+void modify_type_imaginary(ParseCtx *p, Symbol *s)
+{
+	assert(s);
+	if(s->type.category >= T_CHAR && T_s->type.category < T_FLOAT) die(p, "'_Imaginary' doesn't make sense with integer types");
+	if(s->type.is_complex) die(p, "'_Imaginary' doesn't make sense with '_Complex'");
+	s->type.is_imaginary = 1;
+}
+
 
 
 static void repr_token(int bufsz, char buf[], Token t)
@@ -174,42 +342,6 @@ die (ParseCtx *p, const char * fmt, ...)
 	exit(EXIT_FAILURE);
 }
 
-int 
-xatoi (const char *x, int *nchars_read)
-{
-	const char * save = x;
-
-	int sign = 1;
-	int n = 0;
-	int v = 0;
-	
-	if(x[0] == '-') {sign = -1; x++;}
-	if(x[0] == '+') {sign =  1; x++;}
-
-	while (x[0]  &&  x[0] >= 48  &&  x[0] <= 48+9)
-	{
-		int digit = x[0] - 48;
-
-		if (INT_MAX / 10 < v) goto overflow;
-		v *= 10;
-
-		if (INT_MAX - digit < v) goto overflow;
-		v += digit;
-
-		n++;
-		x++;
-	}
-	
-	if (!n) die(0, "couldn't parse '%6s' as an integer", save);
-
-	if (nchars_read) *nchars_read = x-save;
-	return v * sign;
-
-overflow:
-	die(0, "integer overflow when trying to convert '%14s'", save);
-}
-
-
 struct ht {
 	char **ht;
 	int32_t len;
@@ -276,17 +408,14 @@ char *intern(char *key, int keylen)
 
 // TODO/NOTE not thread safe
 // NOTE this is only a global symbol table
-Symbol symtab[1000000] = {0};
+Symbol symtab[100000] = {0};
 int nsym = 0;
 
-Symbol *add_symbol(char *name, Type type, SymbolCategory category)
+Symbol *add_symbol(Symbol s)
 {
-	assert(nsym != COUNT_ARRAY(symtab));
-	symtab[nsym] = (Symbol) {
-		.name = intern(name, 0),
-		.type = type,
-		.category = category,
-	};
+	if(nsym == COUNT_ARRAY(symtab)) die(0, "global symbol table full");
+	s.name = intern(s.name, 0);
+	symtab[nsym] = s;
 	return &symtab[nsym++];
 }
 
@@ -334,8 +463,8 @@ int eat_token(ParseCtx *p, long toktype)
 int external_declaration(ParseCtx *p);
 int function_definition(ParseCtx *p);
 int declaration(ParseCtx *p);
-int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
+int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
+int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
 int declarator(ParseCtx *p);
 int declaration_list(ParseCtx *p);
 int compound_statement(ParseCtx *p);
@@ -344,9 +473,9 @@ int init_declarator_list(ParseCtx *p);
 int init_declarator(ParseCtx *p);
 int static_assert_declaration(ParseCtx *p);
 int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int typedef_name(ParseCtx *p);
-int type_qualifier(ParseCtx *p);
+int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
+int typedef_name(ParseCtx *p, Symbol *out);
+int type_qualifier(ParseCtx *p, Symbol *s);
 int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
 int alignment_specifier(ParseCtx *p);
 int pointer(ParseCtx *p);
@@ -357,8 +486,8 @@ int designative_initializer(ParseCtx *p);
 int initializer(ParseCtx *p);
 int constant_expression(ParseCtx *p);
 int atomic_type_specifier(ParseCtx *p);
-int struct_or_union_specifier(ParseCtx *p);
-int struct_or_union(ParseCtx *p);
+int struct_or_union_specifier(ParseCtx *p, Symbol *s);
+int struct_or_union(ParseCtx *p, Symbol *s);
 int struct_declaration_list(ParseCtx *p);
 int struct_declarator_list(ParseCtx *p);
 int struct_declaration(ParseCtx *p);
@@ -442,7 +571,9 @@ int function_definition(ParseCtx *p)
 	SAVE(p);
 
 	DeclarationSpecifierInfo dsi = {0};
-	int match = declaration_specifiers(p, &dsi);
+	Symbol s = {0};
+
+	int match = declaration_specifiers(p, &dsi, &s);
 	match = match && declarator(p);
 	if(match) declaration_list(p);
 	match = match && compound_statement(p); 
@@ -455,9 +586,12 @@ int declaration(ParseCtx *p)
 {
 	SAVE(p);
 	DeclarationSpecifierInfo dsi = {0};
-	if (declaration_specifiers(p, &dsi)
+	Symbol s = {0};
+
+	if (declaration_specifiers(p, &dsi, &s)
 		&& OPTIONAL(init_declarator_list(p))
 		&& eat_token(p, ';')) { return 1; }
+
 	RESTORE(p);
 
 	if (static_assert_declaration(p)) { return 1; }
@@ -467,18 +601,18 @@ int declaration(ParseCtx *p)
 	return 0;
 }
 
-int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi) 
+int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s) 
 {
-	int match = declaration_specifier(p, dsi);
-	if(match) while (declaration_specifier(p, dsi));
+	int match = declaration_specifier(p, dsi, s);
+	if(match) while (declaration_specifier(p, dsi, s));
 	return match;
 }
 
-int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
+int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s)
 {
 	return storage_class_specifier(p, dsi) 
-	|| type_specifier(p, dsi)
-	|| type_qualifier(p)
+	|| type_specifier(p, dsi, s)
+	|| type_qualifier(p, s)
 	|| function_specifier(p, dsi)
 	|| alignment_specifier(p);
 }
@@ -565,50 +699,45 @@ int static_assert_declaration(ParseCtx *p)
 
 int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	if(eat_identifier(p, "typedef")) { dsi->is_typedef = 1; return 1; }
-	if(eat_identifier(p, "extern"))  { dsi->is_extern = 1; return 1; }
-	if(eat_identifier(p, "static"))  { dsi->is_static = 1; return 1; }
-	if(eat_identifier(p, "_Thread_local"))  { dsi->is_threadlocal = 1; return 1; }
-	if(eat_identifier(p, "auto"))  { dsi->explicit_auto = 1; return 1; }
-	if(eat_identifier(p, "register"))  { dsi->is_register = 1; return 1; }
+	if(eat_identifier(p, "typedef")) { if(dsi)dsi->is_typedef = 1; return 1; }
+	if(eat_identifier(p, "extern"))  { if(dsi)dsi->is_extern = 1; return 1; }
+	if(eat_identifier(p, "static"))  { if(dsi)dsi->is_static = 1; return 1; }
+	if(eat_identifier(p, "_Thread_local"))  { if(dsi)dsi->is_threadlocal = 1; return 1; }
+	if(eat_identifier(p, "auto"))  { if(dsi)dsi->explicit_auto = 1; return 1; }
+	if(eat_identifier(p, "register"))  { if(dsi)dsi->is_register = 1; return 1; }
 	return 0;
 }
 
-int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
+int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s)
 {
 	if(p->tokens == p->tokens_end) return 0;
 
 	if (atomic_type_specifier(p)) return 1;
-	else if (struct_or_union_specifier(p)) return 1;
-	else if (enum_specifier(p)) return 1;
-	else if (typedef_name(p)) return 1;
+	else if (struct_or_union_specifier(p, s)) { return 1; }
+	else if (enum_specifier(p)) { modify_type_int(p,s); return 1; }
+	else if (typedef_name(p, s)) return 1;
 
 	else if (p->tokens[0].toktype == CLEX_id) {
 
-		int match = eat_identifier(p, "void")
-		|| eat_identifier(p, "char")
-		|| eat_identifier(p, "short")
-		|| eat_identifier(p, "int")
-		|| eat_identifier(p, "long")
-		|| eat_identifier(p, "float")
-		|| eat_identifier(p, "double")
-		|| eat_identifier(p, "signed")
-		|| eat_identifier(p, "unsigned")
-		|| eat_identifier(p, "_Bool")
-		|| eat_identifier(p, "_Complex")
-		|| eat_identifier(p, "_Imaginary");
+		if (eat_identifier(p, "void"))     { modify_type_void(p,s); return 1; }
+		if (eat_identifier(p, "char"))     { modify_type_char(p,s); return 1; } 
+		if (eat_identifier(p, "short"))    { modify_type_short(p,s); return 1; }
+		if (eat_identifier(p, "int"))      { modify_type_int(p,s); return 1; }
+		if (eat_identifier(p, "long"))     { modify_type_long(p,s); return 1; }
+		if (eat_identifier(p, "float"))    { modify_type_float(p,s); return 1; }
+		if (eat_identifier(p, "double"))   { modify_type_double(p,s); return 1; }
+		if (eat_identifier(p, "signed"))   { modify_type_signed(p,s); return 1; }
+		if (eat_identifier(p, "unsigned")) { modify_type_unsigned(p,s); return 1; }
+		if (eat_identifier(p, "_Bool"))      { modify_type_bool(p,s); return 1; }
+		if (eat_identifier(p, "_Complex"))    { modify_type_complex(p,s); return 1; }
+		if (eat_identifier(p, "_Imaginary"))  { modify_type_imaginary(p,s); return 1; }
 
-		if(match) {
-			printf("type_specifier: ");
-			fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
-			printf("\n");
-			return 1;
-		}
+		return 0;
 	}
 	return 0;
 }
 
-int typedef_name(ParseCtx *p)
+int typedef_name(ParseCtx *p, Symbol *out)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == CLEX_id) {
@@ -616,8 +745,7 @@ int typedef_name(ParseCtx *p)
 		Symbol *s = 0;
 		if ((s = get_symbol(p->tokens[0].string))) {
 			if (s->category == S_TYPEDEF) {
-				printf("debug: recognized typedef %s\n", s->name); //TODO remove
-
+				*out = *s;
 				p->tokens++;
 				return 1;
 			}
@@ -644,7 +772,7 @@ int type_qualifier(ParseCtx *p)
 
 int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	if(eat_identifier(p, "inline")) { dsi->is_inline = 1; return 1; }
+	if(eat_identifier(p, "inline")) { if(dsi)dsi->is_inline = 1; return 1; }
 	if(eat_identifier(p, "_Noreturn")) return 1;
 	return 0;
 }
@@ -826,11 +954,11 @@ int atomic_type_specifier(ParseCtx *p)
 	return match;
 }
 
-int struct_or_union_specifier(ParseCtx *p)
+int struct_or_union_specifier(ParseCtx *p, Symbol *s)
 {
 	SAVE(p);
 
-	if (struct_or_union(p)
+	if (struct_or_union(p, s)
 		&& eat_token(p, '{')
 		&& struct_declaration_list(p)
 		&& eat_token(p, '}')) { return 1; }
@@ -853,9 +981,11 @@ int struct_or_union_specifier(ParseCtx *p)
 	return 0;
 }
 
-int struct_or_union(ParseCtx *p)
+int struct_or_union(ParseCtx *p, Symbol *s)
 {
-	return eat_identifier(p, "struct") || eat_identifier(p, "union");
+	if(eat_identifier(p, "struct")) { modify_type_struct(p, s); return 1; }
+	if(eat_identifier(p, "union")) { modify_type_union(p, s); return 1; }
+	return 0;
 }
 
 int struct_declaration_list(ParseCtx *p)
