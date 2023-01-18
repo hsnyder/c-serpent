@@ -12,6 +12,63 @@
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
 
+typedef struct {
+	int explicit_auto : 1;
+	int is_typedef : 1;
+	int is_extern : 1;
+	int is_static : 1;
+	int is_threadlocal : 1;
+	int is_register : 1;
+	int is_inline : 1; 
+} DeclarationSpecifierInfo;
+
+enum type_category {
+	T_VOID,
+	T_BOOL,
+	T_CHAR,
+	T_SHORT,
+	T_INT,
+	T_LONG,
+	T_LLONG,
+	T_FLOAT,
+	T_IFLOAT,
+	T_CFLOAT,
+	T_DOUBLE,
+	T_IDOUBLE,
+	T_CDOUBLE,
+	T_LDOUBLE,
+	T_ILDOUBLE,
+	T_CLDOUBLE,
+	T_POINTER,
+	T_STRUCT,
+	T_UNION,
+	T_ARRAY,
+	T_FUNCTION,
+};
+
+typedef struct type {
+	struct type *base;
+	enum type_category category;
+
+	short explicit_signed : 1;
+	short is_unsigned : 1;
+	short is_const : 1;
+	short is_restrict : 1;
+	short is_volatile : 1;
+} Type;
+
+typedef enum symbol_category {
+	S_TYPEDEF,
+	S_LABEL,
+	S_DEFINITION,
+	S_DECLARATION,
+} SymbolCategory;
+
+typedef struct {
+	char *name;
+	Type type;
+	enum symbol_category category;
+} Symbol;
 
 typedef struct { // lexer token
 
@@ -24,98 +81,11 @@ typedef struct { // lexer token
 	};
 } Token;
 
-typedef enum {
-	TC_BUILTIN = 0,
-	TC_STRUCT = 1,
-	TC_UNION = 2,
-	TC_ENUM = 3,
-} TypeCategory;
-
-typedef enum {
-	TQ_CONST = 1,
-	TQ_RESTRICT = 1<<1,
-	TQ_VOLATILE = 1<<2,
-	TQ_ATOMIC   = 1<<3,
-	TQ_POINTER  = 1<<4,
-} TypeQualifier;
-
-typedef struct type{
-	char *name;
-	int name_len;
-	TypeCategory category;
-	TypeQualifier qualifiers;
-	struct type *base;
-} Type; 
-
-enum builtin_types {
-	BT_VOID,
-	BT_BOOL,
-	BT_CHAR,
-	BT_SCHAR,
-	BT_UCHAR,
-	BT_SHORT,
-	BT_USHORT,
-	BT_INT,
-	BT_UINT,
-	BT_LONG,
-	BT_ULONG,
-	BT_LONGLONG,
-	BT_ULONGLONG,
-	BT_FLOAT,
-	BT_FLOAT_IMAG,
-	BT_FLOAT_COMPLEX,
-	BT_DOUBLE,
-	BT_DOUBLE_IMAG,
-	BT_DOUBLE_COMPLEX,
-	BT_LONGDOUBLE,
-	BT_LONGDOUBLE_IMAG,
-	BT_LONGDOUBLE_COMPLEX,
-};
-
-Type builtin_types[] = {
-	[BT_VOID]       =  {.name="void",  .name_len=4, },
-	[BT_BOOL]       =  {.name="_Bool", .name_len=5, },
-
-	[BT_CHAR]       =  {.name="char",               .name_len=4,  },
-	[BT_SCHAR]      =  {.name="signed char",        .name_len=11, },
-	[BT_UCHAR]      =  {.name="unsigned char",      .name_len=13, },
-	[BT_SHORT]      =  {.name="signed short",       .name_len=12, },
-	[BT_USHORT]     =  {.name="unsigned short",     .name_len=14, },
-	[BT_INT]        =  {.name="signed int",         .name_len=10, },
-	[BT_UINT]       =  {.name="unsigned int",       .name_len=12, },
-	[BT_LONG]       =  {.name="signed long",        .name_len=11, },
-	[BT_ULONG]      =  {.name="unsigned long",      .name_len=13, },
-	[BT_LONGLONG]   =  {.name="signed long long",   .name_len=18, },
-	[BT_ULONGLONG]  =  {.name="unsigned long long", .name_len=20, },
-
-	[BT_FLOAT]               =  {.name="float",                  .name_len=5,  },
-	[BT_FLOAT_IMAG]          =  {.name="float _Imaginary",       .name_len=16, },
-	[BT_FLOAT_COMPLEX]       =  {.name="float _Complex",         .name_len=14, },
-	[BT_DOUBLE]              =  {.name="double",                 .name_len=6,  },
-	[BT_DOUBLE_IMAG]         =  {.name="double _Imaginary",      .name_len=17, },
-	[BT_DOUBLE_COMPLEX]      =  {.name="double _Complex",        .name_len=15, },
-	[BT_LONGDOUBLE]          =  {.name="long double",            .name_len=11, },
-	[BT_LONGDOUBLE_IMAG]     =  {.name="long double _Imaginary", .name_len=22, },
-	[BT_LONGDOUBLE_COMPLEX]  =  {.name="long double _Complex",   .name_len=20, },
-
-};
-
-typedef struct { 
-	int sym_len;
-	char *symbol;
-
-	Type *t;
-} TypedefEntry;
-
-typedef struct {
-	TypedefEntry *td;	
-} TypedefTable;
-
 typedef struct {
 	Token     *tokens;   
 	Token     *tokens_end;
 	Token     *tokens_first;   
-	TypedefTable     ttab;
+	int 	depth ;
 } ParseCtx;
 
 /*
@@ -131,6 +101,7 @@ typedef struct {
 #define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
+
 
 static void repr_token(int bufsz, char buf[], Token t)
 {
@@ -303,68 +274,29 @@ char *intern(char *key, int keylen)
 }
 
 
-#include "buf.h"
+// TODO/NOTE not thread safe
+// NOTE this is only a global symbol table
+Symbol symtab[1000000] = {0};
+int nsym = 0;
 
-int check_typedef(ParseCtx *p, char *symbol, int sym_len)
+Symbol *add_symbol(char *name, Type type, SymbolCategory category)
 {
-	assert(symbol);
-	if (sym_len < 1) sym_len = strlen(symbol);
+	assert(nsym != COUNT_ARRAY(symtab));
+	symtab[nsym] = (Symbol) {
+		.name = intern(name, 0),
+		.type = type,
+		.category = category,
+	};
+	return &symtab[nsym++];
+}
 
-	for(int i = 0; i < buf_size(p->ttab.td); i++) 
-		if (sym_len == p->ttab.td[i].sym_len && 
-			memcmp(p->ttab.td[i].symbol, symbol, sym_len)) { return 1; }
+Symbol *get_symbol(char *name)
+{
+	for(int i = 0; i < nsym; i++)
+		if(!strcmp(name,symtab[i].name)) return &symtab[i];
 	return 0;
 }
 
-void add_typedef(ParseCtx *p, char *symbol, int sym_len)
-{
-	assert(symbol);
-	if (sym_len < 1) sym_len = strlen(symbol);
-
-	if(!check_typedef(p, symbol, sym_len))
-		buf_push(p->ttab.td, 
-			((TypedefEntry){
-				.sym_len = sym_len,
-				.symbol  = intern(symbol, sym_len),
-			}));
-}
-
-
-static char * prepend_word(char *base, char *word)
-{
-	assert(base || word);
-	char buf[100] = {0};
-
-	if (base) {
-		assert(sizeof(buf) > snprintf(buf, sizeof(buf), "%s %s", word, base));
-		return intern(buf, 0);
-	}
-	return intern(word, 0);
-}
-
-static char * append_word(char *base, char *word)
-{
-	assert(base || word);
-	char buf[100] = {0};
-
-	if (base) {
-		assert(sizeof(buf) > snprintf(buf, sizeof(buf), "%s %s", base, word));
-		return intern(buf, 0);
-	}
-	return intern(word, 0);
-
-}
-
-static Type *find_builtin_type(char *name)
-{
-	int name_len = strlen(name);
-	for(int i = 0 ; i < COUNT_ARRAY(builtin_types); i++)
-	{
-		if (name_len == builtin_types[i].name_len  &&  memcmp(name,builtin_types[i].name,name_len)) return &builtin_types[i];
-	}
-
-	die(0, "No such built-in type: %s", name);
-}
 
 /*
 	==========================================================
@@ -402,8 +334,8 @@ int eat_token(ParseCtx *p, long toktype)
 int external_declaration(ParseCtx *p);
 int function_definition(ParseCtx *p);
 int declaration(ParseCtx *p);
-int declaration_specifiers(ParseCtx *p);
-int declaration_specifier(ParseCtx *p);
+int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi);
+int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
 int declarator(ParseCtx *p);
 int declaration_list(ParseCtx *p);
 int compound_statement(ParseCtx *p);
@@ -411,11 +343,11 @@ int declaration_or_statement(ParseCtx *p);
 int init_declarator_list(ParseCtx *p);
 int init_declarator(ParseCtx *p);
 int static_assert_declaration(ParseCtx *p);
-int storage_class_specifier(ParseCtx *p);
-int type_specifier(ParseCtx *p);
+int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
+int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
 int typedef_name(ParseCtx *p);
 int type_qualifier(ParseCtx *p);
-int function_specifier(ParseCtx *p);
+int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
 int alignment_specifier(ParseCtx *p);
 int pointer(ParseCtx *p);
 int direct_declarator(ParseCtx *p);
@@ -435,8 +367,8 @@ int enumerator_list(ParseCtx *p);
 int enumerator(ParseCtx *p);
 int enumeration_constant(ParseCtx *p);
 int type_name(ParseCtx *p);
-int specifier_qualifier_list(ParseCtx *p);
-int specifier_qualifier(ParseCtx *p);
+int specifier_qualifier_list(ParseCtx *p, DeclarationSpecifierInfo *dsi);
+int specifier_qualifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
 int abstract_declarator(ParseCtx *p);
 int direct_abstract_declarator(ParseCtx *p);
 int type_qualifier_list(ParseCtx *p);
@@ -509,7 +441,8 @@ int function_definition(ParseCtx *p)
 {
 	SAVE(p);
 
-	int match = declaration_specifiers(p);
+	DeclarationSpecifierInfo dsi = {0};
+	int match = declaration_specifiers(p, &dsi);
 	match = match && declarator(p);
 	if(match) declaration_list(p);
 	match = match && compound_statement(p); 
@@ -521,7 +454,8 @@ int function_definition(ParseCtx *p)
 int declaration(ParseCtx *p)
 {
 	SAVE(p);
-	if (declaration_specifiers(p)
+	DeclarationSpecifierInfo dsi = {0};
+	if (declaration_specifiers(p, &dsi)
 		&& OPTIONAL(init_declarator_list(p))
 		&& eat_token(p, ';')) { return 1; }
 	RESTORE(p);
@@ -533,19 +467,19 @@ int declaration(ParseCtx *p)
 	return 0;
 }
 
-int declaration_specifiers(ParseCtx *p) 
+int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi) 
 {
-	int match = declaration_specifier(p);
-	if(match) while (declaration_specifier(p));
+	int match = declaration_specifier(p, dsi);
+	if(match) while (declaration_specifier(p, dsi));
 	return match;
 }
 
-int declaration_specifier(ParseCtx *p)
+int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	return storage_class_specifier(p) 
-	|| type_specifier(p)
+	return storage_class_specifier(p, dsi) 
+	|| type_specifier(p, dsi)
 	|| type_qualifier(p)
-	|| function_specifier(p)
+	|| function_specifier(p, dsi)
 	|| alignment_specifier(p);
 }
 
@@ -567,7 +501,11 @@ int compound_statement(ParseCtx *p)
 	SAVE(p);
 
 	int match = eat_token(p, '{');
-	if(match) while(declaration_or_statement(p)) {}
+	if(match) {
+		p->depth++;
+		while(declaration_or_statement(p)) {}
+		p->depth--;
+	}
 	match = match && eat_token(p, '}');
 
 	if(!match) RESTORE(p);
@@ -625,25 +563,18 @@ int static_assert_declaration(ParseCtx *p)
 	return match;
 }
 
-int storage_class_specifier(ParseCtx *p)
+int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	int match = eat_identifier(p, "typedef")
-	|| eat_identifier(p, "extern")
-	|| eat_identifier(p, "static")
-	|| eat_identifier(p, "_Thread_local")
-	|| eat_identifier(p, "auto")
-	|| eat_identifier(p, "register");
-
-	if(match) {
-		printf("storage_class_specifier: ");
-		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
-		printf("\n");
-	}
-
-	return match;
+	if(eat_identifier(p, "typedef")) { dsi->is_typedef = 1; return 1; }
+	if(eat_identifier(p, "extern"))  { dsi->is_extern = 1; return 1; }
+	if(eat_identifier(p, "static"))  { dsi->is_static = 1; return 1; }
+	if(eat_identifier(p, "_Thread_local"))  { dsi->is_threadlocal = 1; return 1; }
+	if(eat_identifier(p, "auto"))  { dsi->explicit_auto = 1; return 1; }
+	if(eat_identifier(p, "register"))  { dsi->is_register = 1; return 1; }
+	return 0;
 }
 
-int type_specifier(ParseCtx *p)
+int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
 	if(p->tokens == p->tokens_end) return 0;
 
@@ -682,9 +613,14 @@ int typedef_name(ParseCtx *p)
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == CLEX_id) {
 
-		if (check_typedef(p, p->tokens[0].string, p->tokens[0].string_len)) {
-			p->tokens++;
-			return 1;
+		Symbol *s = 0;
+		if ((s = get_symbol(p->tokens[0].string))) {
+			if (s->category == S_TYPEDEF) {
+				printf("debug: recognized typedef %s\n", s->name); //TODO remove
+
+				p->tokens++;
+				return 1;
+			}
 		}
 	}
 	return 0;
@@ -706,18 +642,11 @@ int type_qualifier(ParseCtx *p)
 	return match;
 }
 
-int function_specifier(ParseCtx *p)
+int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	int match = eat_identifier(p, "inline")
-	|| eat_identifier(p, "_Noreturn");
-
-	if(match){
-		printf("function_specifier: ");
-		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
-		printf("\n");
-	}
-
-	return match;
+	if(eat_identifier(p, "inline")) { dsi->is_inline = 1; return 1; }
+	if(eat_identifier(p, "_Noreturn")) return 1;
+	return 0;
 }
 
 int alignment_specifier(ParseCtx *p)
@@ -939,13 +868,14 @@ int struct_declaration_list(ParseCtx *p)
 int struct_declaration(ParseCtx *p)
 {
 	SAVE(p);
+	DeclarationSpecifierInfo dsi = {0};
 
 	// anonymous struct/union
-	if (specifier_qualifier_list(p) 
+	if (specifier_qualifier_list(p, &dsi) 
 		&& eat_token(p, ';')) {return 1;}
 
 	RESTORE(p);
-	if (specifier_qualifier_list(p)
+	if (specifier_qualifier_list(p, &dsi)
 		&& struct_declarator_list(p)
 		&& eat_token(p, ';')) {return 1;}
 
@@ -1020,21 +950,22 @@ int enumeration_constant(ParseCtx *p)
 
 int type_name(ParseCtx *p)
 {
-	int match = specifier_qualifier_list(p);
+	DeclarationSpecifierInfo dsi = {0};
+	int match = specifier_qualifier_list(p, &dsi);
 	if (match) { (void) abstract_declarator(p); }
 	return match;
 }
 
-int specifier_qualifier_list(ParseCtx *p)
+int specifier_qualifier_list(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	int match = specifier_qualifier(p);
-	if(match) while(specifier_qualifier(p)){}
+	int match = specifier_qualifier(p, dsi);
+	if(match) while(specifier_qualifier(p, dsi)){}
 	return match;
 }
 
-int specifier_qualifier(ParseCtx *p)
+int specifier_qualifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
 {
-	return type_specifier(p) || type_qualifier(p);
+	return type_specifier(p, dsi) || type_qualifier(p);
 }
 
 
@@ -1198,7 +1129,8 @@ int parameter_list(ParseCtx *p)
 
 int parameter_declaration(ParseCtx *p)
 {
-	int match = declaration_specifiers(p);
+	DeclarationSpecifierInfo dsi = {0};
+	int match = declaration_specifiers(p, &dsi);
 	if(match) {
 		if(declarator(p) || abstract_declarator(p)) { }
 	}
