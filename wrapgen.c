@@ -12,16 +12,6 @@
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
 
-typedef struct {
-	int explicit_auto : 1;
-	int is_typedef : 1;
-	int is_extern : 1;
-	int is_static : 1;
-	int is_threadlocal : 1;
-	int is_register : 1;
-	int is_inline : 1; 
-} DeclarationSpecifierInfo;
-
 enum type_category {
 	T_UNINITIALIZED = 0,
 	T_UNKNOWN,
@@ -58,46 +48,23 @@ const char *type_category_strings[] = {
 
 typedef struct type {
 	enum type_category category;
-	unsigned short is_function : 1;
-	unsigned short is_unsigned : 1;
-	unsigned short explicit_signed : 1;
-	unsigned short is_imaginary : 1;
-	unsigned short is_complex : 1;
-
-	unsigned short is_array    : 1;
-	unsigned short is_const    : 1;
-	unsigned short is_restrict : 1;
-	unsigned short is_volatile : 1;
-	unsigned short is_pointer  : 1;
-
-	/*
-		If is_pointer is set, then look at pointer_levels[0].
-		If pointer_levels[0].is_pointer is set, then look at [1], etc.
-
-		We can only hold 3 levels of pointer in this type - sufficient for wrapgen.
-	*/
-
-	struct {
-		unsigned char is_array    : 1;
-		unsigned char is_const    : 1;
-		unsigned char is_restrict : 1;
-		unsigned char is_volatile : 1;
-		unsigned char is_pointer  : 1;
-       	} pointer_levels[3];
+	int explicit_signed : 1;
+	int is_unsigned  : 1;
+	int is_complex   : 1;
+	int is_imaginary : 1;
+	int is_const     : 1;
+	int is_restrict  : 1;
+	int is_volatile  : 1;
+	int is_pointer          : 1;
+	int is_pointer_const    : 1;
+	int is_pointer_restrict : 1;
+	int is_pointer_volatile : 1;
 } Type;
-
-typedef enum symbol_category {
-	S_TYPEDEF,
-	S_LABEL,
-	S_DEFINITION,
-	S_DECLARATION,
-} SymbolCategory;
 
 typedef struct {
 	char *name;
 	Type type;
-	enum symbol_category category;
-} Symbol;
+} TypedefSymbol;
 
 typedef struct { // lexer token
 
@@ -110,11 +77,23 @@ typedef struct { // lexer token
 	};
 } Token;
 
+typedef struct
+{
+	const char * filename;
+	const char * preprocessor;
+	struct {
+		const char *fn;
+		short active;
+	 	short argno;
+	} error_handling;
+} WrapgenArgs;
+
+
 typedef struct {
 	Token     *tokens;   
 	Token     *tokens_end;
 	Token     *tokens_first;   
-	int 	depth ;
+	WrapgenArgs args;
 } ParseCtx;
 
 /*
@@ -130,144 +109,6 @@ typedef struct {
 #define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
-
-void modify_type_struct(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_STRUCT;
-	else die(p, "'struct' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_union(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_UNION;
-	else die(p, "'union' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_void(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-
-	if(s->type.is_unsigned)     die(p, "'void' does not make sense with 'unsigned'");
-	if(s->type.explicit_signed) die(p, "'void' does not make sense with 'signed'");
-	if(s->type.is_imaginary)     die(p, "'void' does not make sense with '_Imaginary'");
-	if(s->type.is_complex)       die(p, "'void' does not make sense with '_Complex'");
-
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_VOID;
-	else die(p, "'void' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_char(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_imaginary)     die(p, "'char' does not make sense with '_Imaginary'");
-	if(s->type.is_complex)       die(p, "'char' does not make sense with '_Complex'");
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_CHAR;
-	else die(p, "'char' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_short(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_imaginary)     die(p, "'short' does not make sense with '_Imaginary'");
-	if(s->type.is_complex)       die(p, "'short' does not make sense with '_Complex'");
-	if(s->type.category == T_UNINITIALIZED || s->type.category == T_INT) s->type.category = T_SHORT;
-	else die(p, "'short' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_int(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_imaginary)     die(p, "'int' does not make sense with '_Imaginary'");
-	if(s->type.is_complex)       die(p, "'int' does not make sense with '_Complex'");
-	if(s->type.category == T_SHORT 
-		|| s->type.category == T_LONG 
-		|| s->type.category = T_LLONG ) return;
-
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_INT;
-	else die(p, "'int' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_long(ParseCtx *p, Symbol *s) 
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_VOID;
-	else if (s->type.category == T_INT) s->type.category = T_LONG;
-	else if (s->type.category == T_LONG) s->type.category = T_LLONG;
-	else if (s->type.category == T_DOUBLE) s->type.category = T_LDOUBLE;
-	else die(p, "'long' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_float(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_unsigned)     die(p, "'float' does not make sense with 'unsigned'");
-	if(s->type.explicit_signed) die(p, "'float' does not make sense with 'signed'");
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_FLOAT;
-	else die(p, "'float' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_double(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_unsigned)     die(p, "'double' does not make sense with 'unsigned'");
-	if(s->type.explicit_signed) die(p, "'double' does not make sense with 'signed'");
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_DOUBLE;
-	if(s->type.category == T_LONG) s->type.category = T_LDOUBLE;
-	else die(p, "'double' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_signed(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category >= T_FLOAT) die(p, "'signed' doesn't make sense with non-integer types");
-	if(s->type.is_unsigned) die(p, "'signed' doesn't make sense with 'unsigned'");
-	s->type.explicit_signed = 1;
-}
-
-void modify_type_unsigned(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category >= T_FLOAT) die(p, "'unsigned' doesn't make sense with non-integer types");
-	if(s->type.is_unsigned) die(p, "'unsigned' doesn't make sense with 'signed'");
-	s->type.is_unsigned = 1;
-}
-
-void modify_type_bool(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category == T_UNKNOWN) return;
-	if(s->type.is_unsigned)     die(p, "'_Bool' does not make sense with 'unsigned'");
-	if(s->type.explicit_signed) die(p, "'_Bool' does not make sense with 'signed'");
-	if(s->type.category == T_UNINITIALIZED) s->type.category = T_BOOL;
-	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[s->type.category]);
-}
-
-void modify_type_complex(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category >= T_CHAR && T_s->type.category < T_FLOAT) die(p, "'_Complex' doesn't make sense with integer types");
-	if(s->type.is_imaginary) die(p, "'_Complex' doesn't make sense with '_Imaginary'");
-	s->type.is_complex = 1;
-}
-
-void modify_type_imaginary(ParseCtx *p, Symbol *s)
-{
-	assert(s);
-	if(s->type.category >= T_CHAR && T_s->type.category < T_FLOAT) die(p, "'_Imaginary' doesn't make sense with integer types");
-	if(s->type.is_complex) die(p, "'_Imaginary' doesn't make sense with '_Complex'");
-	s->type.is_imaginary = 1;
-}
 
 
 
@@ -405,13 +246,48 @@ char *intern(char *key, int keylen)
 	}
 }
 
+int 
+xatoi (const char *x, int *nchars_read)
+{
+	const char * save = x;
+
+	int sign = 1;
+	int n = 0;
+	int v = 0;
+
+	if(x[0] == '-') {sign = -1; x++;}
+	if(x[0] == '+') {sign =  1; x++;}
+
+	while (x[0]  &&  x[0] >= 48  &&  x[0] <= 48+9)
+	{
+		int digit = x[0] - 48;
+
+		if (INT_MAX / 10 < v) goto overflow;
+		v *= 10;
+
+		if (INT_MAX - digit < v) goto overflow;
+		v += digit;
+
+		n++;
+		x++;
+	}
+
+	if (!n) die(0, "couldn't parse '%6s' as an integer", save);
+
+	if (nchars_read) *nchars_read = x-save;
+	return v * sign;
+
+overflow:
+	die(0, "integer overflow when trying to convert '%14s'", save);
+}
+
 
 // TODO/NOTE not thread safe
 // NOTE this is only a global symbol table
-Symbol symtab[100000] = {0};
+TypedefSymbol symtab[10000] = {0};
 int nsym = 0;
 
-Symbol *add_symbol(Symbol s)
+TypedefSymbol *add_symbol(TypedefSymbol s)
 {
 	if(nsym == COUNT_ARRAY(symtab)) die(0, "global symbol table full");
 	s.name = intern(s.name, 0);
@@ -419,17 +295,196 @@ Symbol *add_symbol(Symbol s)
 	return &symtab[nsym++];
 }
 
-Symbol *get_symbol(char *name)
+TypedefSymbol *get_symbol(char *name)
 {
 	for(int i = 0; i < nsym; i++)
 		if(!strcmp(name,symtab[i].name)) return &symtab[i];
 	return 0;
 }
 
+void clear_symbols(void)
+{
+	nsym = 0;
+}
+
+int modify_type_pointer(ParseCtx *p, Type *type)
+{
+	assert(type);
+	if (type->is_pointer) 
+		return 0;
+	type->is_pointer = 1;
+	return 1;
+}
+
+void modify_type_const(ParseCtx *p, Type *type)
+{
+	(void) p;
+	assert(type);
+	if(type->is_pointer) type->is_pointer_const = 1;
+	else type->is_const = 1;
+}
+
+void modify_type_restrict(ParseCtx *p, Type *type)
+{
+	(void) p;
+	assert(type);
+	if(type->is_pointer) type->is_pointer_restrict = 1;
+	else type->is_restrict = 1;
+}
+
+void modify_type_volatile(ParseCtx *p, Type *type)
+{
+	(void) p;
+	assert(type);
+	if(type->is_pointer) type->is_pointer_restrict = 1;
+	if(type->is_pointer) type->is_pointer_volatile = 1;
+	else type->is_volatile = 1;
+}
+
+void modify_type_struct(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->category == T_UNINITIALIZED) type->category = T_STRUCT;
+	else die(p, "'struct' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_union(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->category == T_UNINITIALIZED) type->category = T_UNION;
+	else die(p, "'union' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_void(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+
+	if(type->is_unsigned)     die(p, "'void' does not make sense with 'unsigned'");
+	if(type->explicit_signed) die(p, "'void' does not make sense with 'signed'");
+	if(type->is_imaginary)     die(p, "'void' does not make sense with '_Imaginary'");
+	if(type->is_complex)       die(p, "'void' does not make sense with '_Complex'");
+
+	if(type->category == T_UNINITIALIZED) type->category = T_VOID;
+	else die(p, "'void' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_char(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_imaginary)     die(p, "'char' does not make sense with '_Imaginary'");
+	if(type->is_complex)       die(p, "'char' does not make sense with '_Complex'");
+	if(type->category == T_UNINITIALIZED) type->category = T_CHAR;
+	else die(p, "'char' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_short(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_imaginary)     die(p, "'short' does not make sense with '_Imaginary'");
+	if(type->is_complex)       die(p, "'short' does not make sense with '_Complex'");
+	if(type->category == T_UNINITIALIZED || type->category == T_INT) type->category = T_SHORT;
+	else die(p, "'short' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_int(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_imaginary)     die(p, "'int' does not make sense with '_Imaginary'");
+	if(type->is_complex)       die(p, "'int' does not make sense with '_Complex'");
+	if(type->category == T_SHORT 
+		|| type->category == T_LONG 
+		|| type->category = T_LLONG ) return;
+
+	if(type->category == T_UNINITIALIZED) type->category = T_INT;
+	else die(p, "'int' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_long(ParseCtx *p, Type *type) 
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->category == T_UNINITIALIZED) type->category = T_VOID;
+	else if (type->category == T_INT) type->category = T_LONG;
+	else if (type->category == T_LONG) type->category = T_LLONG;
+	else if (type->category == T_DOUBLE) type->category = T_LDOUBLE;
+	else die(p, "'long' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_float(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_unsigned)     die(p, "'float' does not make sense with 'unsigned'");
+	if(type->explicit_signed) die(p, "'float' does not make sense with 'signed'");
+	if(type->category == T_UNINITIALIZED) type->category = T_FLOAT;
+	else die(p, "'float' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_double(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_unsigned)     die(p, "'double' does not make sense with 'unsigned'");
+	if(type->explicit_signed) die(p, "'double' does not make sense with 'signed'");
+	if(type->category == T_UNINITIALIZED) type->category = T_DOUBLE;
+	if(type->category == T_LONG) type->category = T_LDOUBLE;
+	else die(p, "'double' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_signed(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category >= T_FLOAT) die(p, "'signed' doesn't make sense with non-integer types");
+	if(type->is_unsigned) die(p, "'signed' doesn't make sense with 'unsigned'");
+	type->explicit_signed = 1;
+}
+
+void modify_type_unsigned(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category >= T_FLOAT) die(p, "'unsigned' doesn't make sense with non-integer types");
+	if(type->is_unsigned) die(p, "'unsigned' doesn't make sense with 'signed'");
+	type->is_unsigned = 1;
+}
+
+void modify_type_bool(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_unsigned)     die(p, "'_Bool' does not make sense with 'unsigned'");
+	if(type->explicit_signed) die(p, "'_Bool' does not make sense with 'signed'");
+	if(type->category == T_UNINITIALIZED) type->category = T_BOOL;
+	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+void modify_type_complex(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category >= T_CHAR && T_type->category < T_FLOAT) die(p, "'_Complex' doesn't make sense with integer types");
+	if(type->is_imaginary) die(p, "'_Complex' doesn't make sense with '_Imaginary'");
+	type->is_complex = 1;
+}
+
+void modify_type_imaginary(ParseCtx *p, Type *type)
+{
+	assert(t);
+	if(type->category >= T_CHAR && T_type->category < T_FLOAT) die(p, "'_Imaginary' doesn't make sense with integer types");
+	if(type->is_complex) die(p, "'_Imaginary' doesn't make sense with '_Complex'");
+	type->is_imaginary = 1;
+}
+
+
+
 
 /*
 	==========================================================
-		C99 parsing
+		Parsing
 	==========================================================
 */
 
@@ -456,1446 +511,149 @@ int eat_token(ParseCtx *p, long toktype)
 	return 0;
 }
 
-
-// -----------------------------------------------------------------------
-
-
-int external_declaration(ParseCtx *p);
-int function_definition(ParseCtx *p);
-int declaration(ParseCtx *p);
-int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
-int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
-int declarator(ParseCtx *p);
-int declaration_list(ParseCtx *p);
-int compound_statement(ParseCtx *p);
-int declaration_or_statement(ParseCtx *p);
-int init_declarator_list(ParseCtx *p);
-int init_declarator(ParseCtx *p);
-int static_assert_declaration(ParseCtx *p);
-int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s);
-int typedef_name(ParseCtx *p, Symbol *out);
-int type_qualifier(ParseCtx *p, Symbol *s);
-int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int alignment_specifier(ParseCtx *p);
-int pointer(ParseCtx *p);
-int direct_declarator(ParseCtx *p);
-int identifier_list(ParseCtx *p);
-int initializer_list(ParseCtx *p);
-int designative_initializer(ParseCtx *p);
-int initializer(ParseCtx *p);
-int constant_expression(ParseCtx *p);
-int atomic_type_specifier(ParseCtx *p);
-int struct_or_union_specifier(ParseCtx *p, Symbol *s);
-int struct_or_union(ParseCtx *p, Symbol *s);
-int struct_declaration_list(ParseCtx *p);
-int struct_declarator_list(ParseCtx *p);
-int struct_declaration(ParseCtx *p);
-int enum_specifier(ParseCtx *p);
-int enumerator_list(ParseCtx *p);
-int enumerator(ParseCtx *p);
-int enumeration_constant(ParseCtx *p);
-int type_name(ParseCtx *p);
-int specifier_qualifier_list(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int specifier_qualifier(ParseCtx *p, DeclarationSpecifierInfo *dsi);
-int abstract_declarator(ParseCtx *p);
-int direct_abstract_declarator(ParseCtx *p);
-int type_qualifier_list(ParseCtx *p);
-int parameter_type_list(ParseCtx *p);
-int struct_declarator(ParseCtx *p);
-int assignment_operator(ParseCtx *p);
-int parameter_list(ParseCtx *p);
-int parameter_declaration(ParseCtx *p);
-int expression(ParseCtx *p);
-int assignment_expression(ParseCtx *p);
-int conditional_expression(ParseCtx *p);
-int logical_or_expression(ParseCtx *p);
-int logical_and_expression(ParseCtx *p);
-int inclusive_or_expression(ParseCtx *p);
-int exclusive_or_expression(ParseCtx *p);
-int and_expression(ParseCtx *p);
-int equality_expression(ParseCtx *p);
-int relational_expression(ParseCtx *p);
-int shift_expression(ParseCtx *p);
-int additive_expression(ParseCtx *p);
-int multiplicative_expression(ParseCtx *p);
-int cast_expression(ParseCtx *p);
-int unary_expression(ParseCtx *p);
-int postfix_expression(ParseCtx *p);
-int unary_operator(ParseCtx *p);
-int primary_expression(ParseCtx *p);
-int argument_expression_list(ParseCtx *p);
-int constant(ParseCtx *p);
-int string(ParseCtx *p);
-int generic_selection(ParseCtx *p);
-int generic_assoc_list(ParseCtx *p);
-int generic_association(ParseCtx *p);
-int designation(ParseCtx *p);
-int designator_list(ParseCtx *p);
-int designator(ParseCtx *p);
-int statement(ParseCtx *p);
-int labeled_statement(ParseCtx *p);
-int labeled_statement(ParseCtx *p);
-int expression_statement(ParseCtx *p);
-int selection_statement(ParseCtx *p);
-int iteration_statement(ParseCtx *p);
-int jump_statement(ParseCtx *p);
-
-int string_literal(ParseCtx *p);
-int integer_constant(ParseCtx *p);
-int character_constant(ParseCtx *p);
-int floating_constant(ParseCtx *p);
-int identifier(ParseCtx *p);
-
-
-
-// ------------------------------------------------------------------
-
-
-
-void translation_unit(ParseCtx p)
+static inline 
+int check_token_is_identifier(Token *t, const char *id, long id_len)
 {
-	while(p.tokens < p.tokens_end) {
-		if(!external_declaration(&p)) 
-			die(&p, "Failed to parse before end of file");
+	if (id_len == 0) 
+		id_len = strlen(id);
+
+	if (t.toktype == CLEX_id
+		&& t->string_len == id_len
+		&& !memcmp(t->string, id, id_len)) {
+		return 1;
 	}
-}
-
-int external_declaration (ParseCtx *p) 
-{
-	return function_definition(p) || declaration(p);
-}
-
-int function_definition(ParseCtx *p) 
-{
-	SAVE(p);
-
-	DeclarationSpecifierInfo dsi = {0};
-	Symbol s = {0};
-
-	int match = declaration_specifiers(p, &dsi, &s);
-	match = match && declarator(p);
-	if(match) declaration_list(p);
-	match = match && compound_statement(p); 
-	
-	if(!match) RESTORE(p);
-	return match;
-}
-
-int declaration(ParseCtx *p)
-{
-	SAVE(p);
-	DeclarationSpecifierInfo dsi = {0};
-	Symbol s = {0};
-
-	if (declaration_specifiers(p, &dsi, &s)
-		&& OPTIONAL(init_declarator_list(p))
-		&& eat_token(p, ';')) { return 1; }
-
-	RESTORE(p);
-
-	if (static_assert_declaration(p)) { return 1; }
-
-	if (eat_token(p, ';')) { return 1; }
 
 	return 0;
 }
 
-int declaration_specifiers(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s) 
-{
-	int match = declaration_specifier(p, dsi, s);
-	if(match) while (declaration_specifier(p, dsi, s));
-	return match;
-}
-
-int declaration_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s)
-{
-	return storage_class_specifier(p, dsi) 
-	|| type_specifier(p, dsi, s)
-	|| type_qualifier(p, s)
-	|| function_specifier(p, dsi)
-	|| alignment_specifier(p);
-}
-
-int declarator(ParseCtx *p) 
-{
-	(void) pointer(p);
-	return direct_declarator(p);
-}
-
-int declaration_list(ParseCtx *p)
-{
-	int match = declaration(p);
-	if(match) while(declaration(p)){}
-	return match;
-}
-
-int compound_statement(ParseCtx *p)
-{
-	SAVE(p);
-
-	int match = eat_token(p, '{');
-	if(match) {
-		p->depth++;
-		while(declaration_or_statement(p)) {}
-		p->depth--;
-	}
-	match = match && eat_token(p, '}');
-
-	if(!match) RESTORE(p);
-	return match;
-}
-
-int declaration_or_statement(ParseCtx *p)
-{
-	return declaration(p) || statement(p);
-}
-
-int init_declarator_list(ParseCtx *p)
-{
-	int match = init_declarator(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && init_declarator(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int init_declarator(ParseCtx *p)
-{
-	int match = declarator(p);
-	if (match) {
-		SAVE(p);
-		if(eat_token(p,'=') && initializer(p)) {}
-		else RESTORE(p);
-	}
-
-	return match;
-	
-}
-
-int static_assert_declaration(ParseCtx *p)
-{
-	SAVE(p);
-
-	int match = eat_identifier(p, "_Static_assert")
-	&& eat_token(p, '(')
-	&& constant_expression(p)
-	&& eat_token(p, ',')
-	&& string_literal(p)
-	&& eat_token(p,')')
-	&& eat_token(p,';');
-
-	if(!match) RESTORE(p);
-	return match;
-}
-
-int storage_class_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
-{
-	if(eat_identifier(p, "typedef")) { if(dsi)dsi->is_typedef = 1; return 1; }
-	if(eat_identifier(p, "extern"))  { if(dsi)dsi->is_extern = 1; return 1; }
-	if(eat_identifier(p, "static"))  { if(dsi)dsi->is_static = 1; return 1; }
-	if(eat_identifier(p, "_Thread_local"))  { if(dsi)dsi->is_threadlocal = 1; return 1; }
-	if(eat_identifier(p, "auto"))  { if(dsi)dsi->explicit_auto = 1; return 1; }
-	if(eat_identifier(p, "register"))  { if(dsi)dsi->is_register = 1; return 1; }
-	return 0;
-}
-
-int type_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi, Symbol *s)
+int identifier(ParseCtx *p, char** out_id)
 {
 	if(p->tokens == p->tokens_end) return 0;
-
-	if (atomic_type_specifier(p)) return 1;
-	else if (struct_or_union_specifier(p, s)) { return 1; }
-	else if (enum_specifier(p)) { modify_type_int(p,s); return 1; }
-	else if (typedef_name(p, s)) return 1;
-
-	else if (p->tokens[0].toktype == CLEX_id) {
-
-		if (eat_identifier(p, "void"))     { modify_type_void(p,s); return 1; }
-		if (eat_identifier(p, "char"))     { modify_type_char(p,s); return 1; } 
-		if (eat_identifier(p, "short"))    { modify_type_short(p,s); return 1; }
-		if (eat_identifier(p, "int"))      { modify_type_int(p,s); return 1; }
-		if (eat_identifier(p, "long"))     { modify_type_long(p,s); return 1; }
-		if (eat_identifier(p, "float"))    { modify_type_float(p,s); return 1; }
-		if (eat_identifier(p, "double"))   { modify_type_double(p,s); return 1; }
-		if (eat_identifier(p, "signed"))   { modify_type_signed(p,s); return 1; }
-		if (eat_identifier(p, "unsigned")) { modify_type_unsigned(p,s); return 1; }
-		if (eat_identifier(p, "_Bool"))      { modify_type_bool(p,s); return 1; }
-		if (eat_identifier(p, "_Complex"))    { modify_type_complex(p,s); return 1; }
-		if (eat_identifier(p, "_Imaginary"))  { modify_type_imaginary(p,s); return 1; }
-
-		return 0;
+	if(p->tokens[0].toktype == CLEX_id) {
+		if(out_id) 
+			*out_id = p->tokens[0].string;
+		p->tokens++;
+		return 1;
 	}
 	return 0;
 }
 
-int typedef_name(ParseCtx *p, Symbol *out)
+int typedef_name(ParseCtx *p, Type *t)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == CLEX_id) {
 
-		Symbol *s = 0;
+		TypedefSymbol *s = 0;
 		if ((s = get_symbol(p->tokens[0].string))) {
-			if (s->category == S_TYPEDEF) {
-				*out = *s;
-				p->tokens++;
-				return 1;
-			}
+			if(t) *t = s->type;
+			p->tokens++;
+			return 1;
 		}
 	}
 	return 0;
 }
 
-int type_qualifier(ParseCtx *p)
+int supported_type(ParseCtx *p, Type *t)
 {
-	int match = eat_identifier(p, "const")
-	|| eat_identifier(p, "restrict")
-	|| eat_identifier(p, "volatile")
-	|| eat_identifier(p, "_Atomic");
+	if (p->tokens == p->tokens_end) return 0;
 
-	if(match) {
-		printf("type_qualifier: ");
-		fwrite(p->tokens[-1].string, 1, p->tokens[-1].string_len, stdout);
-		printf("\n");
+	else if (typedef_name(p, t)) return 1;
+
+	else if (eat_token(p, '*')) { return modify_type_pointer(p,t); }
+
+	else if (p->tokens[0].toktype == CLEX_id) {
+
+		if (eat_identifier(p, "void"))     { modify_type_void(p,t); return 1; }
+		if (eat_identifier(p, "char"))     { modify_type_char(p,t); return 1; } 
+		if (eat_identifier(p, "short"))    { modify_type_short(p,t); return 1; }
+		if (eat_identifier(p, "int"))      { modify_type_int(p,t); return 1; }
+		if (eat_identifier(p, "long"))     { modify_type_long(p,t); return 1; }
+		if (eat_identifier(p, "float"))    { modify_type_float(p,t); return 1; }
+		if (eat_identifier(p, "double"))   { modify_type_double(p,t); return 1; }
+		if (eat_identifier(p, "signed"))   { modify_type_signed(p,t); return 1; }
+		if (eat_identifier(p, "unsigned")) { modify_type_unsigned(p,t); return 1; }
+		if (eat_identifier(p, "_Bool"))      { modify_type_bool(p,t); return 1; }
+		if (eat_identifier(p, "_Complex"))    { modify_type_complex(p,t); return 1; }
+		if (eat_identifier(p, "_Imaginary"))  { modify_type_imaginary(p,t); return 1; }
+
+		if (eat_identifier(p, "const"))  { modify_type_const(p,t); return 1; }
+		if (eat_identifier(p, "restrict"))  { modify_type_restrict(p,t); return 1; }
+		if (eat_identifier(p, "volatile"))  { modify_type_restrict(p,t); return 1; }
+
+		return 0;
 	}
-
-	return match;
+	return 0;	
 }
 
-int function_specifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
+int supported_type_list(ParseCtx *p, Type *t)
 {
-	if(eat_identifier(p, "inline")) { if(dsi)dsi->is_inline = 1; return 1; }
-	if(eat_identifier(p, "_Noreturn")) return 1;
-	return 0;
-}
-
-int alignment_specifier(ParseCtx *p)
-{
-	SAVE(p);
-	
-	if (eat_identifier(p, "_Alignas")
-		&& eat_token(p, '(')
-		&& type_name(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "_Alignas")
-		&& eat_token(p, '(')
-		&& constant_expression(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int pointer(ParseCtx *p)
-{
-	int match = eat_token(p, '*');
-	if (match) {
-		(void) type_qualifier_list(p);
-		(void) pointer(p);
-	}
-	return match;
-}
-
-int direct_declarator_head(ParseCtx *p) 
-{
-	SAVE(p);
-
-	if (identifier(p)) { return 1; }
-
-	if (eat_token(p, '(')
-		&& declarator(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int direct_declarator_tail(ParseCtx *p) 
-{
-	SAVE(p);
-
-	if (eat_token(p, '[')
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& type_qualifier_list(p)
-		&& OPTIONAL(eat_token(p, '*'))
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& type_qualifier_list(p)
-		&& OPTIONAL(eat_identifier(p, "static"))
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '(')
-		&& parameter_type_list(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '(')
-		&& identifier_list(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '(')
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	return 0;
-
-}
-
-int direct_declarator(ParseCtx *p)
-{
-	if(!direct_declarator_head(p)) return 0;
-	while(direct_declarator_tail(p)) { }
-
+	if(!supported_type(p,t)) return 0;
+	while(supported_type(p,t)) {}
 	return 1;
 }
 
-int identifier_list(ParseCtx *p)
-{
-	int match = identifier(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && identifier(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int initializer_list(ParseCtx *p)
-{
-	int match = designative_initializer(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && designative_initializer(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int designative_initializer(ParseCtx *p)
-{
-	(void) designation(p);
-	return initializer(p);
-}
-
-int initializer (ParseCtx *p)
+int supported_typedef(ParseCtx *p, TypedefSymbol *s)
 {
 	SAVE(p);
-
-	if (eat_token(p, '{')
-		&& initializer_list(p)
-		&& OPTIONAL(eat_token(p, ','))
-		&& eat_token(p, '}')) { return 1; }
-
-	RESTORE(p);
-	
-	return assignment_expression(p);
-}
-
-int constant_expression(ParseCtx *p)
-{
-	// TODO add constraints!
-	return conditional_expression(p);
-}
-
-int atomic_type_specifier(ParseCtx *p)
-{
-	SAVE(p);
-
-	int match =  eat_identifier(p, "_Atomic")
-	&& eat_token(p, '(')
-	&& type_name(p) 
-	&& eat_token(p, ')');
-
-	if(!match) RESTORE(p);
-
-	return match;
-}
-
-int struct_or_union_specifier(ParseCtx *p, Symbol *s)
-{
-	SAVE(p);
-
-	if (struct_or_union(p, s)
-		&& eat_token(p, '{')
-		&& struct_declaration_list(p)
-		&& eat_token(p, '}')) { return 1; }
-
-	RESTORE(p);
-	if (struct_or_union(p) && identifier(p)) 
-	{ 
-
-		SAVE(p);
-
-		if (eat_token(p, '{')
-			&& struct_declaration_list(p)
-			&& eat_token(p, '}')) { }
-		else RESTORE(p);
-
-		return 1;
-	}
-
-	RESTORE(p);
-	return 0;
-}
-
-int struct_or_union(ParseCtx *p, Symbol *s)
-{
-	if(eat_identifier(p, "struct")) { modify_type_struct(p, s); return 1; }
-	if(eat_identifier(p, "union")) { modify_type_union(p, s); return 1; }
-	return 0;
-}
-
-int struct_declaration_list(ParseCtx *p)
-{
-	int match = struct_declaration(p);
-	if(match) while(struct_declaration(p)) { }
-	return match;
-}
-
-int struct_declaration(ParseCtx *p)
-{
-	SAVE(p);
-	DeclarationSpecifierInfo dsi = {0};
-
-	// anonymous struct/union
-	if (specifier_qualifier_list(p, &dsi) 
-		&& eat_token(p, ';')) {return 1;}
-
-	RESTORE(p);
-	if (specifier_qualifier_list(p, &dsi)
-		&& struct_declarator_list(p)
-		&& eat_token(p, ';')) {return 1;}
-
-	RESTORE(p);
-	if (static_assert_declaration(p)) {return 1;}
-
-	RESTORE(p);
-	return 0;
-}
-
-int enum_specifier(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_identifier(p, "enum") 
-		&& eat_token(p, '{')
-		&& enumerator_list(p)
-		&& OPTIONAL(eat_token(p,','))
-		&& eat_token(p, '}')) { return 1;}
-
-	RESTORE(p);
-	if (eat_identifier(p, "enum") 
-		&& identifier(p)) 
-	{
-
-		SAVE(p);
-
-		if(eat_token(p, '{')
-			&& enumerator_list(p)
-			&& OPTIONAL(eat_token(p,','))
-			&& eat_token(p, '}')) { }
-		else RESTORE(p);
-
-		return 1;
-	}
-	return 0;
-}
-
-int enumerator_list(ParseCtx *p)
-{
-	int match = enumerator(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && enumerator(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int enumerator(ParseCtx *p)
-{
-	int match = enumeration_constant(p);
-	if(match) {
-		SAVE(p);
-		if (eat_token(p, '=') && constant_expression(p)) { }
-		else RESTORE(p);
-	}
-	return match;
-}
-
-int enumeration_constant(ParseCtx *p)
-{
-	// todo add some checking?
-	return identifier(p);
-}
-
-int type_name(ParseCtx *p)
-{
-	DeclarationSpecifierInfo dsi = {0};
-	int match = specifier_qualifier_list(p, &dsi);
-	if (match) { (void) abstract_declarator(p); }
-	return match;
-}
-
-int specifier_qualifier_list(ParseCtx *p, DeclarationSpecifierInfo *dsi)
-{
-	int match = specifier_qualifier(p, dsi);
-	if(match) while(specifier_qualifier(p, dsi)){}
-	return match;
-}
-
-int specifier_qualifier(ParseCtx *p, DeclarationSpecifierInfo *dsi)
-{
-	return type_specifier(p, dsi) || type_qualifier(p);
-}
-
-
-int abstract_declarator(ParseCtx *p)
-{
-	if (pointer(p)) {
-		(void) direct_abstract_declarator(p);
-		return 1;
-	}
-	return direct_abstract_declarator(p);
-}
-
-int direct_abstract_declarator_head(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_token(p, '(') 
-		&& abstract_declarator(p)
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESTORE(p);
-	return 0; 
-}
-
-int direct_abstract_declarator_tail(ParseCtx *p)
-{
-	SAVE(p);
-	if (eat_token(p, '[')
-		&& OPTIONAL(type_qualifier_list(p))
-		&& OPTIONAL(assignment_expression(p))
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& eat_identifier(p, "static")
-		&& OPTIONAL(type_qualifier_list(p))
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& type_qualifier_list(p)
-		&& eat_identifier(p, "static")
-		&& assignment_expression(p)
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '[')
-		&& eat_token(p, '*')
-		&& eat_token(p, ']')) {  return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '(')
-		&& OPTIONAL(parameter_type_list(p))
-		&& eat_token(p, ')')) {  return 1; }
-
-	RESTORE(p);
-	return 0;
-
-}
-
-int direct_abstract_declarator(ParseCtx *p)
-{
-	int did_consume_some_input = direct_abstract_declarator_head(p);
-	while(direct_abstract_declarator_tail(p)) { did_consume_some_input = 1;}	
-
-	return did_consume_some_input;
-}
-
-int struct_declarator_list(ParseCtx *p)
-{
-	int match = struct_declarator(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && struct_declarator(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int type_qualifier_list(ParseCtx *p)
-{
-	int match = type_qualifier(p);
-	if(match) while(type_qualifier(p)) {}
-	return match;
-}
-
-int parameter_type_list(ParseCtx *p)
-{
-	int match = parameter_list(p);
-	if(match){
-		SAVE(p);
-		// BUG: three dots don't need to be adjacent here
-		if (eat_token(p,',') 
-			&& eat_token(p, '.')
-			&& eat_token(p, '.')
-			&& eat_token(p, '.')) { }
-		else RESTORE(p);
-	}
-	return match;
-}
-
-int struct_declarator(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_token(p, ':') && constant_expression(p)) { return 1; }
-
-	RESTORE(p);
-	if (declarator(p)) {
-		SAVE(p);
-
-		if (eat_token(p, ':') && constant_expression(p)) { }
-		else RESTORE(p);
-
-		return 1;
-	}
-
-	RESTORE(p);
-	return 0;
-}
-
-int assignment_operator(ParseCtx *p)
-{
-	return eat_token(p, '=')
-	|| eat_token(p, CLEX_muleq)
-	|| eat_token(p, CLEX_diveq)
-	|| eat_token(p, CLEX_modeq)
-	|| eat_token(p, CLEX_pluseq)
-	|| eat_token(p, CLEX_minuseq)
-	|| eat_token(p, CLEX_shleq)
-	|| eat_token(p, CLEX_shreq)
-	|| eat_token(p, CLEX_andeq)
-	|| eat_token(p, CLEX_xoreq)
-	|| eat_token(p, CLEX_oreq);
-}
-
-
-int parameter_list(ParseCtx *p)
-{
-	int match = parameter_declaration(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && parameter_declaration(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int parameter_declaration(ParseCtx *p)
-{
-	DeclarationSpecifierInfo dsi = {0};
-	int match = declaration_specifiers(p, &dsi);
-	if(match) {
-		if(declarator(p) || abstract_declarator(p)) { }
-	}
-	return match;
-}
-
-int expression(ParseCtx *p)
-{
-	int match = assignment_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && assignment_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int assignment_expression(ParseCtx *p) 
-{
-	if(conditional_expression(p)) return 1;
-
-	SAVE(p);
-
-	if (unary_expression(p) 
-		&& assignment_operator(p)
-		&& assignment_expression(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int conditional_expression(ParseCtx *p)
-{
-	int match = logical_or_expression(p);
-	if (match) {
-		SAVE(p);
-		if (eat_token(p,'?')
-			&& expression(p)
-			&& eat_token(p, ':')
-			&& conditional_expression(p)) { }
-		else RESTORE(p);
-	}
-	return match;
-}
-
-int logical_or_expression(ParseCtx *p)
-{
-	int match = logical_and_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, CLEX_oror) && logical_and_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int logical_and_expression(ParseCtx *p)
-{
-	int match = inclusive_or_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, CLEX_andand) && inclusive_or_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int inclusive_or_expression(ParseCtx *p)
-{
-	int match = exclusive_or_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, '|') && exclusive_or_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int exclusive_or_expression(ParseCtx *p)
-{
-	int match = and_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, '^') && and_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int and_expression(ParseCtx *p)
-{
-	int match = equality_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, '&') && equality_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int equality_expression(ParseCtx *p)
-{
-	int match = relational_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if ((eat_token(p, CLEX_eq) || eat_token(p, CLEX_noteq)) 
-			&& relational_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-
-int relational_expression(ParseCtx *p)
-{
-	int match = shift_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if ((eat_token(p, '<') || eat_token(p, '>') || eat_token(p, CLEX_lesseq) || eat_token(p, CLEX_greatereq)) 
-			&& shift_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int shift_expression(ParseCtx *p)
-{
-	int match = additive_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if ((eat_token(p, CLEX_shl) || eat_token(p, CLEX_shr)) 
-			&& additive_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-
-int additive_expression(ParseCtx *p)
-{
-	int match = multiplicative_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if ((eat_token(p, '+') || eat_token(p, '-')) 
-			&& multiplicative_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-
-int multiplicative_expression(ParseCtx *p)
-{
-	int match = cast_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if ((eat_token(p, '*') || eat_token(p, '/') || eat_token(p, '%') )
-			&& cast_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int cast_expression(ParseCtx *p)
-{
-	if (unary_expression(p)) { return 1; }
-
-	SAVE(p);
-
-	if (eat_token(p, '(')
-		&& type_name(p)
-		&& eat_token(p, ')')
-		&& cast_expression(p)) { return 1; }
-	
-	RESTORE(p);
-	return 0;
-}
-
-int unary_expression(ParseCtx *p)
-{
-	if (postfix_expression(p)) { return 1; }
-
-	SAVE(p);
-
-	if ((eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus))
-		&& unary_expression(p)) { return 1;}
-
-	RESTORE(p);
-	if (unary_operator(p) 
-		&& cast_expression(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "sizeof")
-		&& unary_expression(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "sizeof")
-		&& eat_token(p, '(')
-		&& type_name(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "_Alignof")
-		&& eat_token(p, '(')
-		&& type_name(p)
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int postfix_expression_head(ParseCtx *p)
-{
-	if (primary_expression(p)) { return 1; }
-	
-	SAVE(p);
-	if (eat_token(p, '(')
-		&& type_name(p)
-		&& eat_token(p, ')')
-		&& eat_token(p, '{')
-		&& initializer_list(p)
-		&& OPTIONAL(eat_token(p, ','))
-		&& eat_token(p, '}')) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-
-int postfix_expression_tail(ParseCtx *p)
-{
-	SAVE(p);
-	if (eat_token(p, '[')
-		&& expression(p)
-		&& eat_token(p, ']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '(')
-		&& OPTIONAL(argument_expression_list(p))
-		&& eat_token(p, ')')) { return 1; }
-
-	RESTORE(p);
-	if ((eat_token(p,'.') || eat_token(p, CLEX_arrow))
-		&& identifier(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, CLEX_plusplus) || eat_token(p, CLEX_minusminus)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int postfix_expression(ParseCtx *p)
-{
-	if(!postfix_expression_head(p)){return 0;}
-	while(postfix_expression_tail(p)) { }
-	return 1;
-}
-
-int unary_operator(ParseCtx *p)
-{
-	return eat_token(p, '&')
-	|| eat_token(p, '*')
-	|| eat_token(p, '+')
-	|| eat_token(p, '-')
-	|| eat_token(p, '~')
-	|| eat_token(p, '!');
-}
-
-int primary_expression(ParseCtx *p)
-{
-	if (identifier(p)) { return 1; } 
-
-	if (constant(p)) { return 1; }
-
-	if (string(p)) { return 1; }
-
-	SAVE(p);
-	if (eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')) { return 1;}
-	RESTORE(p);
-
-	if (generic_selection(p)) { return 1; }
-
-	return 0;
-}
-
-int argument_expression_list(ParseCtx *p)
-{
-	int match = assignment_expression(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && assignment_expression(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int constant(ParseCtx *p)
-{
-	return integer_constant(p)
-	|| character_constant(p)
-	|| floating_constant(p)
-	|| enumeration_constant(p);
-}
-
-int string(ParseCtx *p)
-{
-	return string_literal(p) 
-	|| eat_identifier(p, "__func__");
-}
-
-
-int generic_selection(ParseCtx *p)
-{
-	SAVE(p);
-	int match = eat_identifier(p, "_Generic")
-		&& eat_token(p, '(')
-		&& assignment_expression(p)
-		&& eat_token(p, ',')
-		&& generic_assoc_list(p)
-		&& eat_token(p, ')');
-
-	if(!match) RESTORE(p);
-	return match;
-}
-
-int generic_assoc_list(ParseCtx *p)
-{
-	int match = generic_association(p);
-
-	if(match) while(1) 
-	{
-		SAVE(p);
-		if (eat_token(p, ',') && generic_association(p)) {}
-		else {
-			RESTORE(p);
-			break;
-		}
-	}
-
-	return match;
-}
-
-int generic_association(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (type_name(p)
-		&& eat_token(p, ':')
-		&& assignment_expression(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "default")
-		&& eat_token(p, ':')
-		&& assignment_expression(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int designation(ParseCtx *p)
-{
-	SAVE(p);
-	int match = designator_list(p)
-		&& eat_token(p, '=');
-	if(!match) RESTORE(p);
-	return match;
-}
-
-int designator_list(ParseCtx *p)
-{
-	int match = designator(p);
-	if(match) while(designator(p)) {}
-	return match;
-}
-
-int designator(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_token(p, '[')
-		&& constant_expression(p)
-		&& eat_token(p,']')) { return 1; }
-
-	RESTORE(p);
-	if (eat_token(p, '.')
-		&& identifier(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int statement(ParseCtx *p)
-{
-	return labeled_statement(p)
-	|| compound_statement(p)
-	|| expression_statement(p)
-	|| selection_statement(p)
-	|| iteration_statement(p)
-	|| jump_statement(p);
-}
-
-int labeled_statement(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (identifier(p)
-		&& eat_token(p, ':')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "case")
-		&& constant_expression(p)
-		&& eat_token(p, ':')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "default")
-		&& eat_token(p, ':')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int expression_statement(ParseCtx *p)
-{
-	(void) expression(p);
-	return eat_token(p, ';');
-}
-
-int selection_statement(ParseCtx *p)
-{
-	SAVE(p);
-	
-	if (eat_identifier(p, "if") 
-		&& eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')
-		&& statement(p)
-		&& eat_identifier(p, "else")
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "if") 
-		&& eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "switch")
-		&& eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int iteration_statement(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_identifier(p, "while")
-		&& eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "do")
-		&& statement(p)
-		&& eat_identifier(p, "while")
-		&& eat_token(p, '(')
-		&& expression(p)
-		&& eat_token(p, ')')
-		&& eat_token(p, ';')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "for")
-		&& eat_token(p, '(')
-		&& OPTIONAL(expression(p))
-		&& eat_token(p, ';')
-		&& OPTIONAL(expression(p))
-		&& eat_token(p, ';')
-		&& OPTIONAL(expression(p))
-		&& eat_token(p, ')')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "for")
-		&& eat_token(p, '(')
-		&& declaration(p)
-		&& OPTIONAL(expression(p))
-		&& eat_token(p, ';')
-		&& OPTIONAL(expression(p))
-		&& eat_token(p, ')')
-		&& statement(p)) { return 1; }
-
-	RESTORE(p);
-	return 0;
-}
-
-int jump_statement(ParseCtx *p)
-{
-	SAVE(p);
-
-	if (eat_identifier(p, "goto")
-		&& identifier(p)
-		&& eat_token(p, ';')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "continue")
-		&& eat_token(p, ';')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "break")
-		&& eat_token(p, ';')) { return 1; }
-
-	RESTORE(p);
-	if (eat_identifier(p, "return")
-		&& OPTIONAL(expression(p))
+	if(eat_identifier(p, "typedef")
+		&& supported_type_list(p, &s->type)
+		&& identifier(p, &s->name)
 		&& eat_token(p, ';')) { return 1; }
 
 	RESTORE(p);
 	return 0;
 }
 
-
-
-int string_literal(ParseCtx *p)
+void populate_symbols(ParseCtx p)
 {
-	return eat_token(p, CLEX_dqstring);
+	while(p.tokens != p.tokens_end) {
+
+		while (!check_token_is_identifier(p.tokens, "typedef", 7)) 
+			p.tokens++;
+
+		TypedefSymbol s = {0};
+		if (supported_typedef(&p, &s)) {
+			add_symbol(s);
+
+			//TODO remove
+			char buf[200] = {0};
+			repr_symbol(buf, sizeof(buf), s.type);
+			fprintf(stderr, "debug: registered type %s", buf); 
+		} else {
+			p.tokens++;
+		}
+	}
 }
 
-int integer_constant(ParseCtx *p)
+void process_function(ParseCtx p)
 {
-	return eat_token(p, CLEX_intlit);
+	// on entry, p.tokens is set right on the function name.	
+	const char * fn = p.tokens.string;
+	// rewind to semicolon
+	while(p.tokens[0].toktype != ';') p.tokens--;
+
+	// TODO continue here
 }
 
-int character_constant(ParseCtx *p)
+void parse_file(ParseCtx p, const char *function_name)
 {
-	return eat_token(p, CLEX_charlit);
-}
+	long len = strlen(function_name);
 
-int floating_constant(ParseCtx *p)
-{
-	return eat_token(p, CLEX_floatlit);
-}
-
-int identifier(ParseCtx *p)
-{
-	return eat_token(p, CLEX_id);
+	while (p.tokens != p.tokens_end) {
+		if (check_token_is_identifier(p.tokens, function_name, len) )
+		{
+			process_function(p);
+			return;
+		}
+		p.tokens++;
+	}
+	die(0, "didn't find function called '%s' in file '%s'", function_name, p.args.filename);
 }
 
 
 /*
 	==========================================================
-		Main
+		Lexing
 	==========================================================
 */
 
@@ -1904,69 +662,77 @@ int identifier(ParseCtx *p)
 #define pclose(x) _pclose(x)
 #endif
 
-int 
-main (int argc, char *argv[])
-{
-	(void)argc;
-	
-	/*
-		Figure out what file we're asked to work on
-		if -f flag is supplied, obey that, 
-		else use stdin
-	*/
 
-	char *filename = 0;
-	char **arg = argv;
-	while(*(++arg)) {
-		if (!strcmp("-f",*arg)) {
-			if(!++arg) die(0, "got -f flag but no filename follows");
-			filename = *arg;
+enum delim_stack_action {
+	DS_PUSH,
+	DS_POP,
+	DS_QUERY,
+};
+long delim_stack(enum delim_stack_action action, Token value) {
+	static long stack[1000] = {0};
+	static long pos = 0;
+
+	switch(action) {
+	case DS_PUSH:
+		if(pos == COUNT_ARRAY(stack)) die(0, "congratulations, your file blew the delimiter stack");
+		stack[pos++] = value.toktype;
+		return -1;
+	case DS_POP:
+		if(pos == 0) die(0, "mismatched delimiters (extraneous %c)", (char)value.toktype);
+		switch(value)
+		{
+		case '}':
+			if ('{' != stack[pos--]) die(0, "mismatched delimiters (expected '}')");
+			break;
+		case ')':
+			if ('(' != stack[pos--]) die(0, "mismatched delimiters (expected ')')");
+			break;
+		case ']':
+			if ('[' != stack[pos--]) die(0, "mismatched delimiters (expected ']')");
+			break;
+		default:
+			assert(0);
 		}
+		return pos == 0;
+	case DS_QUERY:
+		return pos;	
+	default: 
+		assert(0);
 	}
+	return -1;	
+}
 
-	if(filename) die(0,"-f flag not yet implemented");
+void delim_push(Token value) { (void)delim_stack(DS_PUSH, value); }
+int  delim_pop(Token value) { return delim_stack(DS_POP, value); }
+int  toplevel(void) { return 0 == delim_stack(DS_QUERY, (Token){0}); }
 
-	FILE *f = stdin;
-	if(filename) {
 
-		f = fopen(filename, "rb");
-		if(!f) die(0,"couldn't open '%s'", filename);
-
-	}
-	
-	/*
-		Wrapgen flags are:
-		-e,arg,chkfn add custom error checking (call chkfn and pass arg (specified by number))
-	*/
-	
-	
-	/*
-		Allocate buffers
-	*/
-	
-	char  *text         = malloc(1<<27);
-	char  *string_store = malloc(0x10000);
-	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
-
+int lex_file(const char * filename, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+{
 	int ntok = 0;
-	
-	if(!(text && string_store && tokens)) die(0,"out of mem");
-	
+
 	/*
 		Read input file
 	*/
 	
-	long long len = fread(text, 1, 1<<27, f);
-	if(len == (1<<27)) die(0,"input file too long");
+	FILE *f = fopen(filename, "rb");
+	if(!f) die(0, "couldn't open %s", filename);
+	long long len = fread(text, 1, text_bufsz, f);
+	if(len == text_bufsz) die(0,"input file too long");
 	fclose(f);
 	
 	/*
 		Lex whole file
 	*/
-	
+
+	int ntok = 0;
+	tokens[ntok++] = (Token){.toktype=';'}
+
 	stb_lexer lex = {0};
-	stb_c_lexer_init(&lex, text, text+len, (char *) string_store, 0x10000);
+	stb_c_lexer_init(&lex, text, text+len, (char *) string_store, string_store_bufsz);
 	while(stb_c_lexer_get_token(&lex)) {
+		if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
+
 		Token t = {.toktype = lex.token};
 		switch(lex.token)
 		{
@@ -2017,19 +783,156 @@ main (int argc, char *argv[])
 				}
 				break;
 		}		
-		
-		tokens[ntok++] = t;
+
+		// skip all braced code.
+		// when scanning braced code, check that delimiters mathc, but that's it. 
+
+		if(t.toktype == '{') {
+			delim_push(t);
+		} else if(t.toktype == '}') {
+			if(delim_pop(t)) {
+				t.toktype=';';
+				tokens[ntok++] = t;
+			}
+		}
+
+		if(toplevel()) {
+			tokens[ntok++] = t;
+		} else {
+			if(t.toktype == '(' || t.toktype == '[') delim_push(t);	
+			else if(t.toktype == ')' || t.toktype == ']') assert(!delim_pop(t));
+		}
 	}
-	
+
+	if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
+	tokens[ntok++] = (Token){.toktype = ';'};
+	return ntok;
+}
+
+
+/*
+	==========================================================
+		Main
+	==========================================================
+*/
+
+
+int 
+main (int argc, char *argv[])
+{
+	(void)argc;
 	/*
-		Run parser on token array.
+		Allocate buffers
+	*/
+	
+	char  *text         = malloc(1<<27);
+	char  *string_store = malloc(0x10000);
+	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
+	if(!(text && string_store && tokens)) die(0,"out of mem");
+
+
+	/*
+		Wrapgen arguments consist of identifiers and flags.
+		Flags start with '-', identifiers don't. 
+
+		Identifiers are interpreted as function names unless they follow a '-f' flag,
+		in which case they are filenames. 
+
+		The order of arguments matters, a flag affects everything after it, until a like flag
+		overrides it's function. For example the command line '-f file1.c sum product min max -f file2.c mean'
+		would result in searching file1.c for functions called 'sum', 'product', 'min', 'max', and searching
+		file2.c for a function called 'mean'
+
+		Flags:
+
+		-f   the following identifier is a filename.
+
+		-p   the following identifier specifies the preprocessor to use, if different from the default 'cc -E'
+
+		-e   for functions that follow: if they return a string (const char *), the string is to be interpreted
+		     as an error message (if not null) and a python exception should be thrown
+		     
+		     this flag only lasts until the next file change (i.e. -f)
+
+		-e,n,chkfn   for functions that follow: after calling, another function called chkfn should be called.
+		     chkfn should have the signature 'const char * checkfn (?)' where ? is the type of the n-th argument
+		     to the function (0 means the function's return value). if the chkfn call returns a non-null string,
+		     that string is assumed to be an error message and a python exception is generated.
+
+		     this flag only lasts until the next file change (i.e. -f)
 	*/
 
-	ParseCtx p = {
-		.tokens_first  =   tokens,
-		.tokens        =   tokens,
-		.tokens_end    =   tokens+ntok,
-	};
+	WragpgenArgs args = {.preprocessor = "cc -E"};
+	int ntok = 0;
 
-	translation_unit(p);
+	while (*argv) {
+		if (!strcmp(*argv, "-p")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				args.preprocessor = *argv;
+				argv++;
+			} else {
+				die(0, "-p flag must be followed by a program (to serve as preprocessor)");
+			}
+			continue;
+		}
+
+		if (!strcmp(*argv, "-f")) {
+			argv++;
+			if(*argv && **argv != '-') {
+				memset(&args.error_handling, 0, sizeof(args.error_handling));
+				args.filename = *argv;
+				ntok = lex_file(args.filename, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
+				clear_symbols();
+				populate_symbols((ParseCtx) {
+					.tokens_first  =  tokens,
+					.tokens        =  tokens,
+					.tokens_end    =  tokens+ntok,
+					.args = args,
+				});
+				argv++;
+			} else {
+				die(0, "-f flag must be followed by a filename");
+			}
+			continue;
+		}
+
+		if (!strncmp(*argv, "-e,", 3)) {
+			char *c = *argv+3;
+			int nchars_read = 0;
+			int argno = xatoi(c, &nchars_read);
+			c += nchars_read+1;
+			if(c[-1] != ',') die(0,"expected comma in argument '%s'", *argv);
+			args.error_handling.active = 1;
+			args.error_handling.argno = argno;
+			args.error_handling.fn = c;
+			argv++;
+			continue;
+		}
+
+		if (!strncmp(*argv, "-e", 2)) {
+			args.error_handling.active = 1;
+			args.error_handling.argno = 0;
+			args.error_handling.fn = 0;
+			argv++;
+			continue;	
+		}
+
+		if (**argv == '-') {
+			die("unrecognized flag: '%s'", *argv);
+		}
+
+		/*
+			Run parser on token array.
+		*/
+
+		ParseCtx p = {
+			.tokens_first  =  tokens,
+			.tokens        =  tokens,
+			.tokens_end    =  tokens+ntok,
+			.args = args,
+		};
+
+		parse_file(p, *argv);
+	}
 }
