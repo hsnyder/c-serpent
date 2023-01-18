@@ -631,8 +631,10 @@ void process_function(ParseCtx p)
 	const char * fn = p.tokens.string;
 	// rewind to semicolon
 	while(p.tokens[0].toktype != ';') p.tokens--;
+	p.tokens++;
 
 	// TODO continue here
+	// recognize specifiers, return type, identifier, argument list, attributes, semicolon
 }
 
 void parse_file(ParseCtx p, const char *function_name)
