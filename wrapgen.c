@@ -701,7 +701,10 @@ void emit_call(const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[])
 	for(int i = 0; i < n_fnargs; i++)
 	{
 		char *sep  =  i ? ", " : "";
-		printf("%s%s", sep, fnargs[i].name);
+		if (is_array(fnargs[i].type))
+			printf("%sPyArray_DATA(%s)", sep, fnargs[i].name);
+		else 
+			printf("%s%s", sep, fnargs[i].name);
 	}
 
 	printf(");\n");
@@ -754,10 +757,10 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 	if(n_fnargs) {
 
 		// keyword name list
-		printf("    static const char *kwlist[] = {");
+		printf("    static char *kwlist[] = {");
 	        for(int i = 0; i < n_fnargs; i++)
 			printf("\n        \"%s\",", fnargs[i].name);
-		printf("};\n");
+		printf("0};\n");
 
 		// declare a C variable for each argument
 		for(int i = 0; i < n_fnargs; i++) {
@@ -1525,7 +1528,7 @@ int usage(void)
 	"                                                                             \n"
 	"Typical usage:  \n"
 	" $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   \n"
-	" $ cc -shared -I/path/to/python/headers \\\n"
+	" $ cc -fPIC -shared -I/path/to/python/headers \\\n"
 	"       wrappers.c my_c_file.c \\\n"
 	"       -lpython -o coolmodule.so\n"
 	"                                                                             \n"
@@ -1680,12 +1683,7 @@ main (int argc, char *argv[])
 
 			if(*argv && **argv != '-') {
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
-
 				args.filename = *argv;
-
-				fnames[n_fnames++] = *argv;
-				if(n_fnames == COUNT_ARRAY(fnames)) 
-					die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 				ntok = lex_file(args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
 				clear_symbols();
 				populate_symbols((ParseCtx) {
@@ -1733,6 +1731,10 @@ main (int argc, char *argv[])
 		/*
 			Run parser on token array.
 		*/
+
+		fnames[n_fnames++] = *argv;
+		if(n_fnames == COUNT_ARRAY(fnames)) 
+			die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 
 		ParseCtx p = {
 			.tokens_first  =  tokens,
