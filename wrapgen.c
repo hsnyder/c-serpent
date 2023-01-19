@@ -891,28 +891,30 @@ long delim_stack(enum delim_stack_action action, Token value, char *start, char*
 		{
 		case '}':
 			if ('{' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (expected '}')\n\n");
+				fprintf(stderr, "mismatched delimiters (got '}' to match '%c')\n\n", stack[pos]);
 				goto mismatch_close;
 			}
-			break;
+			return delim_stack(DS_QUERY, value, start, loc);
 		case ')':
 			if ('(' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (expected ')')\n\n");
+				fprintf(stderr, "mismatched delimiters (got ')' to match '%c')\n\n", stack[pos]);
 				goto mismatch_close;
 			}
 			break;
 		case ']':
 			if ('[' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (expected ']')\n\n");
+				fprintf(stderr, "mismatched delimiters (got ']' to match '%c')\n\n", stack[pos]);
 				goto mismatch_close;
 			}
 			break;
 		default:
 			assert(0);
 		}
-		return pos == 0;
+		return 0;
 	case DS_QUERY:
-		return pos;	
+		for (int i = 0; i < pos; i++)
+			if(stack[i] == '{') return 0;
+		return 1;
 	default: 
 		assert(0);
 	}
@@ -929,7 +931,7 @@ mismatch_close:
 
 void delim_push(Token value, char *start, char* loc) { (void)delim_stack(DS_PUSH, value, start, loc); }
 int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP, value, start, loc); }
-int  toplevel(void) { return 0 == delim_stack(DS_QUERY, (Token){0}, 0, 0); }
+int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
 int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
@@ -1033,8 +1035,7 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 				t.string = intern(lex.string, t.string_len);
 				break;
 			case CLEX_charlit:
-				t.string = lex.string;
-				t.string_len = 1;
+				t.int_number = lex.int_number;
 				break;
 			case CLEX_intlit:
 				t.int_number = lex.int_number;
@@ -1077,27 +1078,17 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		// skip all braced code.
 		// when scanning braced code, check that delimiters mathc, but that's it. 
 
-		if(t.toktype == '{') {
+		if(t.toktype == '{' || t.toktype == '(' || t.toktype == '[') {
 			delim_push(t, text_start, lex.where_firstchar);
-		} else if(t.toktype == '}') {
+		} else if(t.toktype == '}' || t.toktype == ')' || t.toktype == ']') {
 			if(delim_pop(t, text_start, lex.where_firstchar)) {
-				t.toktype=';';
-				tokens[ntok++] = t;
+				tokens[ntok++] = (Token){.toktype=';'};
 			}
 		}
 
 		if(toplevel()) {
 			tokens[ntok++] = t;
-		} else {
-			if(t.toktype == '(' || t.toktype == '[') {
-
-				delim_push(t, text_start, lex.where_firstchar);	
-
-			} else if(t.toktype == ')' || t.toktype == ']') {
-
-				assert(!delim_pop(t, text_start, lex.where_firstchar));
-			}
-		}
+		} 
 	}
 
 	if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
