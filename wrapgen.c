@@ -1118,5 +1118,6 @@ main (int argc, char *argv[])
 		};
 
 		parse_file(p, *argv);
+		argv++;
 	}
 }
