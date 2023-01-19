@@ -82,11 +82,21 @@ typedef struct
 	int verbose;
 	const char * filename;
 	const char * preprocessor;
+	int disable_pp;
+	const char *dirs[40];
+	int ndirs;
+
 	struct {
 		const char *fn;
 		short active;
 	 	short argno;
 	} error_handling;
+
+	struct {
+		const char *files[40];
+		int nfiles;
+	} manual_include;
+
 } WrapgenArgs;
 
 
@@ -833,32 +843,69 @@ void parse_file(ParseCtx p, const char *function_name)
 #define pclose(x) _pclose(x)
 #endif
 
+
+void print_context(char *start, char *loc)
+{
+	char *first = loc;
+	while(loc-first < 60 && first >= start) 
+		first--;
+	while(*first != '\n' && first >= start) 
+		first--;
+
+	char *last = loc;
+	while(last-loc < 60 && *last != 0) 
+		last++;
+	while(*last != '\n' && *last != 0) 
+		last++;
+
+	while(first != last) {
+		if (first == loc) fprintf(stderr, " HERE>>>");
+		putc(*(first++),stderr);
+	}
+}
+
 enum delim_stack_action {
 	DS_PUSH,
 	DS_POP,
 	DS_QUERY,
 };
-long delim_stack(enum delim_stack_action action, Token value) {
-	static short stack[1000] = {0};
+long delim_stack(enum delim_stack_action action, Token value, char *start, char* loc) {
+	static short stack[200] = {0};
+	static char *locations[200] = {0};
 	static long pos = 0;
 
 	switch(action) {
 	case DS_PUSH:
 		if(pos == COUNT_ARRAY(stack)) die(0, "congratulations, your file blew the delimiter stack");
+		locations[pos] = loc;
 		stack[pos++] = value.toktype;
 		return -1;
 	case DS_POP:
-		if(pos == 0) die(0, "mismatched delimiters (extraneous %c)", (char)value.toktype);
+		if(pos == 0) {
+			fprintf(stderr, "mismatched delimiters (extraneous %c)\n\ncontext:\n", (char)value.toktype);
+			print_context(start, loc);
+			fputc('\n', stderr);
+			exit(EXIT_FAILURE);
+		}
 		switch(value.toktype)
 		{
 		case '}':
-			if ('{' != stack[--pos]) die(0, "mismatched delimiters (expected '}')");
+			if ('{' != stack[--pos]) {
+				fprintf(stderr, "mismatched delimiters (expected '}')\n\n");
+				goto mismatch_close;
+			}
 			break;
 		case ')':
-			if ('(' != stack[--pos]) die(0, "mismatched delimiters (expected ')')");
+			if ('(' != stack[--pos]) {
+				fprintf(stderr, "mismatched delimiters (expected ')')\n\n");
+				goto mismatch_close;
+			}
 			break;
 		case ']':
-			if ('[' != stack[--pos]) die(0, "mismatched delimiters (expected ']')");
+			if ('[' != stack[--pos]) {
+				fprintf(stderr, "mismatched delimiters (expected ']')\n\n");
+				goto mismatch_close;
+			}
 			break;
 		default:
 			assert(0);
@@ -870,34 +917,99 @@ long delim_stack(enum delim_stack_action action, Token value) {
 		assert(0);
 	}
 	return -1;	
+
+mismatch_close:
+	fprintf(stderr, "opening delimiter context:\n\n");
+	print_context(start, locations[pos]);
+	fprintf(stderr, "\n\ninvalid closing delimiter context:\n\n");
+	print_context(start, loc);
+	fputc('\n', stderr);
+	exit(EXIT_FAILURE);
 }
 
-void delim_push(Token value) { (void)delim_stack(DS_PUSH, value); }
-int  delim_pop(Token value) { return delim_stack(DS_POP, value); }
-int  toplevel(void) { return 0 == delim_stack(DS_QUERY, (Token){0}); }
+void delim_push(Token value, char *start, char* loc) { (void)delim_stack(DS_PUSH, value, start, loc); }
+int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP, value, start, loc); }
+int  toplevel(void) { return 0 == delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
 int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
 
+	// preserve the start of the text buffer and ensure always null terminated.
+	char *text_start = text;
+	memset(text,0,text_bufsz);
+	text_bufsz--;
+
+	/* 
+		If we're manually including files, do so.
+	*/
+
+	for (int i = 0; i < args.manual_include.nfiles; i++)
+	{
+		// try the current directory
+		FILE *f = fopen(args.manual_include.files[i], "rb");
+
+		// try the list of -I paths
+		if(!f) for (int j = 0; j < args.ndirs; j++)
+		{
+			char path[4096] = {0};
+			// TODO accomodate windows
+			if(sizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
+				die(0, "internal buffer overflow (path too long)");
+			f = fopen(path, "rb");
+			if(f) break;
+		}
+
+		// try the system default path
+		if(!f) {
+			char path[4096] = {0};
+			// TODO accomodate windows
+			if(sizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
+				die(0, "internal buffer overflow (path too long)");
+			f = fopen(path, "rb");
+		}
+
+		if(!f) die(0, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
+
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die(0,"input file too long");
+		text += len;
+		text_bufsz -= len;
+
+		fclose(f);
+	}
+
 	/*
 		Read input file
 	*/
 
-	char cmd[200] = {0};
-	if(sizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
-		die(0, "internal buffer overflow");
-	
-	FILE *f = popen(cmd, "r");
-	if(!f) die(0, "couldn't popen '%s'", cmd);
-	long long len = fread(text, 1, text_bufsz, f);
-	if(len == text_bufsz) die(0,"input file too long");
-	int exit_status = pclose(f);
-	switch (exit_status) {
-		case  0: break;
-		case -1: die(0, "wait4 on '%s' failed, or other internal error occurred", cmd);
-		default: die(0, "'%s' failed with code %i", cmd, exit_status);
+	if(!args.preprocessor || args.disable_pp) {
+
+		// read the usual way
+		FILE *f = fopen(args.filename, "rb");
+		if(!f) die(0, "couldn't fopen '%s'", args.filename);
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die(0,"input file too long");
+		fclose(f);
+
+	} else {
+
+		// read via popen to preprocessor command
+		char cmd[200] = {0};
+		if(sizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
+			die(0, "internal buffer overflow");
+		
+		FILE *f = popen(cmd, "r");
+		if(!f) die(0, "couldn't popen '%s'", cmd);
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die(0,"input file too long");
+		int exit_status = pclose(f);
+		switch (exit_status) {
+			case  0: break;
+			case -1: die(0, "wait4 on '%s' failed, or other internal error occurred", cmd);
+			default: die(0, "'%s' failed with code %i", cmd, exit_status);
+		}
 	}
 	
 	/*
@@ -907,7 +1019,7 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 	tokens[ntok++] = (Token){.toktype=';'};
 
 	stb_lexer lex = {0};
-	stb_c_lexer_init(&lex, text, text+len, (char *) string_store, string_store_bufsz);
+	stb_c_lexer_init(&lex, text_start, text+strlen(text_start), (char *) string_store, string_store_bufsz);
 	while(stb_c_lexer_get_token(&lex)) {
 		if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
 
@@ -966,9 +1078,9 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		// when scanning braced code, check that delimiters mathc, but that's it. 
 
 		if(t.toktype == '{') {
-			delim_push(t);
+			delim_push(t, text_start, lex.where_firstchar);
 		} else if(t.toktype == '}') {
-			if(delim_pop(t)) {
+			if(delim_pop(t, text_start, lex.where_firstchar)) {
 				t.toktype=';';
 				tokens[ntok++] = t;
 			}
@@ -977,8 +1089,14 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		if(toplevel()) {
 			tokens[ntok++] = t;
 		} else {
-			//if(t.toktype == '(' || t.toktype == '[') delim_push(t);	
-			//else if(t.toktype == ')' || t.toktype == ']') assert(!delim_pop(t));
+			if(t.toktype == '(' || t.toktype == '[') {
+
+				delim_push(t, text_start, lex.where_firstchar);	
+
+			} else if(t.toktype == ')' || t.toktype == ']') {
+
+				assert(!delim_pop(t, text_start, lex.where_firstchar));
+			}
 		}
 	}
 
@@ -995,6 +1113,59 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 */
 
 
+int usage(void)
+{
+	const char *message = 
+	"Wrapgen arguments consist of identifiers and flags. \n"
+	"Flags start with '-', identifiers don't.  \n"
+	"                                                                             \n"
+	"Identifiers are interpreted as function names unless they follow a '-f' flag,\n"
+	"in which case they are filenames.  \n"
+	"                                                                             \n"
+	"The order of arguments matters, a flag affects everything after it, until a\n"
+	"like flag overrides it's function. For example the command line  \n"
+	"'-f file1.c sum product min max -f file2.c mean' \n"
+	"would result in searching file1.c for functions called 'sum', 'product',  \n"
+	"'min', 'max', and searching file2.c for a function called 'mean' \n"
+	"                                                                             \n"
+	"Flags: \n"
+	"                                                                             \n"
+	"-h   print help message and exit \n"
+	"                                                                             \n"
+	"-v   verbose \n"
+	"                                                                             \n"
+	"-f   the following identifier is a filename. \n"
+	"                                                                             \n"
+	"-p   the following identifier specifies the preprocessor to use for the next \n"
+	"     and future files, if different from the default 'cc -E' \n"
+	"                                                                             \n"
+	"-P   disable preprocessing of the next file encountered \n"
+	"                                                                             \n"
+	"-i   the following identifier is a filename, to be inlcuded before the next  \n"
+	"     file processed (for use with -P) \n"
+	"                                                                             \n"
+	"-I   the following identifier is a directory path, to be searched for any  \n"
+	"     future -i flags \n"
+	"                                                                             \n"
+	"-e   for functions that follow: if they return a string (const char *), the  \n"
+	"     string is to be interpreted as an error message (if not null) and a python\n"
+	"     exception should be thrown \n"
+	"                                                                             \n"
+	"     this flag only lasts until the next file change (i.e. -f) \n"
+	"                                                                             \n"
+	"-e,n,chkfn   for functions that follow: after calling, another function called\n"
+	"     chkfn should be called.  chkfn should have the signature  \n"
+	"     'const char * checkfn (?)' where ? is the type of the n-th argument to the\n"
+	"     function (0 means the function's return value). if the chkfn call returns\n"
+	"     a non-null string, that string is assumed to be an error message and a  \n"
+	"     python exception is generated. \n"
+	"                                                                             \n"
+	"     this flag only lasts until the next file change (i.e. -f) \n";
+
+	fprintf(stderr, "%s", message);
+
+}
+
 int 
 main (int argc, char *argv[])
 {
@@ -1010,46 +1181,49 @@ main (int argc, char *argv[])
 	if(!(text && string_store && tokens)) die(0,"out of mem");
 
 
-	/*
-		Wrapgen arguments consist of identifiers and flags.
-		Flags start with '-', identifiers don't. 
-
-		Identifiers are interpreted as function names unless they follow a '-f' flag,
-		in which case they are filenames. 
-
-		The order of arguments matters, a flag affects everything after it, until a like flag
-		overrides it's function. For example the command line '-f file1.c sum product min max -f file2.c mean'
-		would result in searching file1.c for functions called 'sum', 'product', 'min', 'max', and searching
-		file2.c for a function called 'mean'
-
-		Flags:
-		
-		-v   verbose
-
-		-f   the following identifier is a filename.
-
-		-p   the following identifier specifies the preprocessor to use, if different from the default 'cc -E'
-
-		-e   for functions that follow: if they return a string (const char *), the string is to be interpreted
-		     as an error message (if not null) and a python exception should be thrown
-		     
-		     this flag only lasts until the next file change (i.e. -f)
-
-		-e,n,chkfn   for functions that follow: after calling, another function called chkfn should be called.
-		     chkfn should have the signature 'const char * checkfn (?)' where ? is the type of the n-th argument
-		     to the function (0 means the function's return value). if the chkfn call returns a non-null string,
-		     that string is assumed to be an error message and a python exception is generated.
-
-		     this flag only lasts until the next file change (i.e. -f)
-	*/
 
 	WrapgenArgs args = {.preprocessor = "cc -E"};
 	int ntok = 0;
 
 	while (*argv) {
+		if (!strcmp(*argv, "-h")) {
+			usage();
+			exit(EXIT_SUCCESS);
+		}
+
 		if (!strcmp(*argv, "-v")) {
 			args.verbose = 1;
 			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-P")) {
+			args.disable_pp = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-I")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				if(args.ndirs == COUNT_ARRAY(args.dirs)) die(0, "A maximum of %i -I flags can be used in a single wrapgen invocation.", (int)COUNT_ARRAY(args.dirs));
+				args.dirs[args.ndirs++] = *argv;
+				argv++;
+			} else {
+				die(0, "-I flag must be followed by a directory (to be searched for files manually included with -i)");
+			}
+			continue;
+		}
+
+		if (!strcmp(*argv, "-i")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				if(args.manual_include.nfiles == COUNT_ARRAY(args.manual_include.files)) die(0, "A maximum of %i -i flags can be used per file to be processed.", (int)COUNT_ARRAY(args.manual_include.files));
+				args.manual_include.files[args.manual_include.nfiles++] = *argv;
+				argv++;
+			} else {
+				die(0, "-i flag must be followed by a file path (to be manually included when processing the next file)");
+			}
 			continue;
 		}
 
@@ -1077,6 +1251,8 @@ main (int argc, char *argv[])
 					.tokens_end    =  tokens+ntok,
 					.args = args,
 				});
+				args.disable_pp = 0;
+				memset(&args.manual_include, 0, sizeof(args.manual_include));
 				argv++;
 			} else {
 				die(0, "-f flag must be followed by a filename");
