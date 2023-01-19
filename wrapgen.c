@@ -184,7 +184,7 @@ void dump_context(FILE *f, ParseCtx *p)
 		char buf[1000] = {0};
 		repr_token(sizeof(buf), buf, p->tokens[i]);
 		if( i == 0 )
-			fprintf(f, "HERE>>> %s ", buf);
+			fprintf(f, ">>HERE<< %s ", buf);
 		else 
 			fprintf(f, "%s ", buf);
 	}
@@ -357,7 +357,6 @@ void modify_type_volatile(ParseCtx *p, Type *type)
 {
 	(void) p;
 	assert(type);
-	if(type->is_pointer) type->is_pointer_restrict = 1;
 	if(type->is_pointer) type->is_pointer_volatile = 1;
 	else type->is_volatile = 1;
 }
@@ -430,6 +429,7 @@ void modify_type_long(ParseCtx *p, Type *type)
 {
 	assert(type);
 	if(type->category == T_UNKNOWN) return;
+
 	if(type->category == T_UNINITIALIZED) type->category = T_LONG;
 	else if (type->category == T_INT) type->category = T_LONG;
 	else if (type->category == T_LONG) type->category = T_LLONG;
@@ -443,6 +443,7 @@ void modify_type_float(ParseCtx *p, Type *type)
 	if(type->category == T_UNKNOWN) return;
 	if(type->is_unsigned)     die(p, "'float' does not make sense with 'unsigned'");
 	if(type->explicit_signed) die(p, "'float' does not make sense with 'signed'");
+
 	if(type->category == T_UNINITIALIZED) type->category = T_FLOAT;
 	else die(p, "'float' does not make sense with '%s'", type_category_strings[type->category]);
 }
@@ -453,8 +454,9 @@ void modify_type_double(ParseCtx *p, Type *type)
 	if(type->category == T_UNKNOWN) return;
 	if(type->is_unsigned)     die(p, "'double' does not make sense with 'unsigned'");
 	if(type->explicit_signed) die(p, "'double' does not make sense with 'signed'");
+
 	if(type->category == T_UNINITIALIZED) type->category = T_DOUBLE;
-	if(type->category == T_LONG) type->category = T_LDOUBLE;
+	else if(type->category == T_LONG) type->category = T_LDOUBLE;
 	else die(p, "'double' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
@@ -480,6 +482,7 @@ void modify_type_bool(ParseCtx *p, Type *type)
 	if(type->category == T_UNKNOWN) return;
 	if(type->is_unsigned)     die(p, "'_Bool' does not make sense with 'unsigned'");
 	if(type->explicit_signed) die(p, "'_Bool' does not make sense with 'signed'");
+
 	if(type->category == T_UNINITIALIZED) type->category = T_BOOL;
 	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[type->category]);
 }
