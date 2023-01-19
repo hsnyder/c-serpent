@@ -80,6 +80,8 @@ typedef struct { // lexer token
 typedef struct
 {
 	int verbose;
+	int disable_declarations;
+	const char * modulename;
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
@@ -524,6 +526,13 @@ void modify_type_imaginary(ParseCtx *p, Type *type)
 }
 
 
+/*
+	==========================================================
+		Templates
+	==========================================================
+*/
+
+
 
 /*
 	==========================================================
@@ -531,6 +540,81 @@ void modify_type_imaginary(ParseCtx *p, Type *type)
 	==========================================================
 */
 
+void emit_module(WrapgenArgs flags, int n_fnames, const char *fnames[])
+{
+	if(!flags.modulename) return;
+
+	printf("static PyMethodDef module_functions[] = { \n");
+
+	for (int i = 0; i < n_fnames; i++) {
+		printf("{\"%s\", (PyCFunction) wrap_%s, METH_VARARGS|METH_KEYWORDS, \"\"},\n", 
+			fnames[i], fnames[i]);
+	}
+
+	printf(
+	"	{ NULL, NULL, 0, NULL } \n"
+	"}; \n"
+	"\n\n"
+	"static const char module_name[] = \"%s\"; \n"
+	"\n"
+	"static struct PyModuleDef module_def = { \n"
+	"	PyModuleDef_HEAD_INIT, \n"
+	"	module_name,      /* m_name */ \n"
+	"	NULL,             /* m_doc */ \n"
+	"	-1,               /* m_size */ \n"
+	"	module_functions, /* m_methods */ \n"
+	"	NULL,             /* m_reload */ \n"
+	"	NULL,             /* m_traverse */ \n"
+	"	NULL,             /* m_clear  */ \n"
+	"	NULL,             /* m_free */ \n"
+	"}; \n"
+	" \n"
+	"static PyObject *module_init(void) \n"
+	"{ \n"
+	"	PyObject *m; \n"
+	" \n"
+	"	// Import numpy arrays \n"
+	"	import_array1(NULL); \n"
+	" \n"
+	"	// Register the module \n"
+	"	if (!(m = PyModule_Create(&module_def))) \n"
+	"		return NULL; \n"
+	" \n"
+	"	return m; \n"
+	"} \n"
+	" \n"
+	"PyMODINIT_FUNC PyInit_%s (void) \n"
+	"{ \n"
+	"	return module_init(); \n"
+	"} \n", flags.modulename, flags.modulename);
+}
+
+void emit_preamble(WrapgenArgs flags)
+{
+	(void) flags;
+	static const char * preamble = 
+	"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
+	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
+	"#include <Python.h> \n"
+	"#include <numpy/arrayobject.h> \n"
+	"#define C2NPY(type) _Generic((type){0},    \\\n"
+	"	signed char:        NPY_BYTE,      \\\n"
+	"	short:              NPY_SHORT,     \\\n"
+	"	int:                NPY_INT,       \\\n"
+	"	long:               NPY_LONG,      \\\n"
+	"	long long:          NPY_LONGLONG,  \\\n"
+	"	unsigned char:      NPY_UBYTE,     \\\n"
+	"	unsigned short:     NPY_USHORT,    \\\n"
+	"	unsigned int:       NPY_UINT,      \\\n"
+	"	unsigned long:      NPY_ULONG,     \\\n"
+	"	unsigned long long: NPY_ULONGLONG, \\\n"
+	"	float:              NPY_FLOAT,     \\\n"
+	"	double:             NPY_DOUBLE,    \\\n"
+	"	_Complex float:     NPY_CFLOAT,    \\\n"
+	"	_Complex double:    NPY_CDOUBLE    \\\n"
+	"	)\n";
+	printf("%s\n", preamble);
+}
 
 int is_string(Type t)
 {
@@ -644,6 +728,26 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 {
 	assert(n_fnargs >= 0);
 
+	// declaration for function to be wrapped
+	if(!flags.disable_declarations) {
+		char buf[200] = {0};
+		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+
+		printf("%s %s (", buf, fn);
+
+		for(int i = 0; i < n_fnargs; i++)
+		{
+			memset(buf,0,sizeof(buf));
+			assert(sizeof(buf) > repr_type(sizeof(buf), buf, fnargs[i].type));
+
+			char * sep  =  i ? ", " : "";
+			printf("%s%s %s", sep, buf, fnargs[i].name);
+		}
+
+		printf(");\n");
+	}
+
+	// start of wrapper definition
 	printf("PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
 	printf("    (void) self;\n");
 
@@ -1415,11 +1519,15 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 int usage(void)
 {
 	const char *message = 
-	"Wrapgen arguments consist of identifiers and flags. \n"
-	"Flags start with '-', identifiers don't.  \n"
+
+	"wrapgen \n"
+	"======= \n"
 	"                                                                             \n"
-	"Identifiers are interpreted as function names unless they follow a '-f' flag,\n"
-	"in which case they are filenames.  \n"
+	"Typical usage:  \n"
+	" $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   \n"
+	" $ cc -shared -I/path/to/python/headers \\\n"
+	"       wrappers.c my_c_file.c \\\n"
+	"       -lpython -o coolmodule.so\n"
 	"                                                                             \n"
 	"The order of arguments matters, a flag affects everything after it, until a\n"
 	"like flag overrides it's function. For example the command line  \n"
@@ -1433,17 +1541,23 @@ int usage(void)
 	"                                                                             \n"
 	"-v   verbose \n"
 	"                                                                             \n"
-	"-f   the following identifier is a filename. \n"
+	"-D   disable including function declarations in the generated wrapper file \n"
+	"     this might be used to facilitate amalgamation builds, for example \n"
 	"                                                                             \n"
-	"-p   the following identifier specifies the preprocessor to use for the next \n"
+	"-m   the following argument is the name of the module to be built \n"
+	"     only one module per wrapgen invocation is allowed  \n"
+	"                                                                             \n"
+	"-f   the following argument is a filename. \n"
+	"                                                                             \n"
+	"-p   the following argument specifies the preprocessor to use for the next \n"
 	"     and future files, if different from the default 'cc -E' \n"
 	"                                                                             \n"
 	"-P   disable preprocessing of the next file encountered \n"
 	"                                                                             \n"
-	"-i   the following identifier is a filename, to be inlcuded before the next  \n"
+	"-i   the following argument is a filename, to be inlcuded before the next  \n"
 	"     file processed (for use with -P) \n"
 	"                                                                             \n"
-	"-I   the following identifier is a directory path, to be searched for any  \n"
+	"-I   the following argument is a directory path, to be searched for any  \n"
 	"     future -i flags \n"
 	"                                                                             \n"
 	"-e   for functions that follow: if they return a string (const char *), the  \n"
@@ -1462,7 +1576,6 @@ int usage(void)
 	"     this flag only lasts until the next file change (i.e. -f) \n";
 
 	fprintf(stderr, "%s", message);
-
 }
 
 int 
@@ -1479,10 +1592,13 @@ main (int argc, char *argv[])
 	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
 	if(!(text && string_store && tokens)) die(0,"out of mem");
 
-
+	int emitted_preamble = 0;
 
 	WrapgenArgs args = {.preprocessor = "cc -E"};
 	int ntok = 0;
+
+	const char *fnames[200] = {0};
+	int n_fnames = 0;
 
 	while (*argv) {
 		if (!strcmp(*argv, "-h")) {
@@ -1498,6 +1614,12 @@ main (int argc, char *argv[])
 
 		if (!strcmp(*argv, "-P")) {
 			args.disable_pp = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-D")) {
+			args.disable_declarations = 1;
 			argv++;
 			continue;
 		}
@@ -1525,6 +1647,17 @@ main (int argc, char *argv[])
 			}
 			continue;
 		}
+		
+		if (!strcmp(*argv, "-m")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				args.modulename = *argv;
+				argv++;
+			} else {
+				die(0, "-m flag must be followed by a valid name (for the generated python module)");
+			}
+			continue;
+		}
 
 		if (!strcmp(*argv, "-p")) { 
 			argv++;
@@ -1539,9 +1672,20 @@ main (int argc, char *argv[])
 
 		if (!strcmp(*argv, "-f")) {
 			argv++;
+
+			if(!emitted_preamble) {
+				emit_preamble(args); 
+				emitted_preamble = 1;
+			}
+
 			if(*argv && **argv != '-') {
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
+
 				args.filename = *argv;
+
+				fnames[n_fnames++] = *argv;
+				if(n_fnames == COUNT_ARRAY(fnames)) 
+					die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 				ntok = lex_file(args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
 				clear_symbols();
 				populate_symbols((ParseCtx) {
@@ -1581,7 +1725,9 @@ main (int argc, char *argv[])
 		}
 
 		if (**argv == '-') {
-			die(0, "unrecognized flag: '%s'", *argv);
+			fprintf(stderr, "unrecognized flag: '%s'\n\n", *argv);
+			usage();
+			exit(EXIT_FAILURE);
 		}
 
 		/*
@@ -1598,4 +1744,6 @@ main (int argc, char *argv[])
 		parse_file(p, *argv);
 		argv++;
 	}
+
+	emit_module(args, n_fnames, fnames);
 }
