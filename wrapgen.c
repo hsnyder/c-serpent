@@ -1586,6 +1586,9 @@ main (int argc, char *argv[])
 {
 	(void)argc;
 	argv++;
+
+	if(!*argv) usage();
+
 	/*
 		Allocate buffers
 	*/
