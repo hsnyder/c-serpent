@@ -23,6 +23,19 @@ Python integers. `char*` and `void*` are also supported as return types, but
 other pointer types are not (so define your output arrays in Python, and 
 populate them with C code). 
 
+For example, consider this C function:
+
+    double mean_i32(int N, int32_t *array) 
+    {
+        double sum = 0.0;
+        for (int i = 0; i < N; i++) sum += array[i];
+        return sum/N;
+    }
+
+The resulting wrapper will accept a Python integer for `N`, and a
+numpy array with `dtype=numpy.int32` for `array`. An exception will
+be raised if the types don't match.
+
 
 Usage
 -----
