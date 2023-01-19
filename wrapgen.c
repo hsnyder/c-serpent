@@ -109,7 +109,7 @@ typedef struct {
 
 /*
 	==========================================================
-		Helper functions
+		Helper functions for parsing and handling errors
 	==========================================================
 */
 
@@ -121,26 +121,36 @@ typedef struct {
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
+static int repr_type(int bufsz, char buf[], Type type) {
+
+	char *is_signed    = type.explicit_signed ? "signed " : "";
+        char *is_unsigned  = type.is_unsigned     ? "unsigned " : "";
+	char *is_complex   = type.is_complex      ? "_Complex " : "";
+	char *is_imaginary = type.is_imaginary    ? "_Imaginary " : "";
+	char *is_const     = type.is_const        ? "const " : "";
+	char *is_restrict  = type.is_restrict     ? "restrict " : "";
+	char *is_volatile  = type.is_volatile     ? "volatile " : "";
+	char *is_pointer   = type.is_pointer      ? "*" : "";
+
+	char *is_pointer_const    = type.is_pointer_const    ? "const " : "";
+	char *is_pointer_restrict = type.is_pointer_restrict ? "restrict " : "";
+	char *is_pointer_volatile = type.is_pointer_volatile ? "volatile " : "";
+
+	return snprintf(buf, bufsz, "%s%s%s %s%s%s%s%s%s%s%s%s", 
+		is_signed, is_unsigned, type_category_strings[type.category], is_complex, is_imaginary,
+		is_const, is_restrict, is_volatile, is_pointer,
+		is_pointer_const, is_pointer_restrict, is_pointer_volatile);
+}
+
 
 static int repr_symbol(int bufsz, char buf[], Symbol s) {
 
-	char *is_signed    = s.type.explicit_signed ? "signed " : "";
-        char *is_unsigned  = s.type.is_unsigned     ? "unsigned " : "";
-	char *is_complex   = s.type.is_complex      ? "_Complex " : "";
-	char *is_imaginary = s.type.is_imaginary    ? "_Imaginary " : "";
-	char *is_const     = s.type.is_const        ? "const " : "";
-	char *is_restrict  = s.type.is_restrict     ? "restrict " : "";
-	char *is_volatile  = s.type.is_volatile     ? "volatile " : "";
-	char *is_pointer   = s.type.is_pointer      ? "*" : "";
+	long x = snprintf(buf, bufsz, "%s :=  ", s.name);
+	bufsz -= x;
+	buf += x;
+	// TODO bug: make sure we haven't already overflown the buffer.
 
-	char *is_pointer_const    = s.type.is_pointer_const    ? "const " : "";
-	char *is_pointer_restrict = s.type.is_pointer_restrict ? "restrict " : "";
-	char *is_pointer_volatile = s.type.is_pointer_volatile ? "volatile " : "";
-
-	return snprintf(buf, bufsz, "%s  :=  %s%s%s %s%s%s%s%s%s%s%s%s", s.name,
-		is_signed, is_unsigned, type_category_strings[s.type.category], is_complex, is_imaginary,
-		is_const, is_restrict, is_volatile, is_pointer,
-		is_pointer_const, is_pointer_restrict, is_pointer_volatile);
+	return x + repr_type(bufsz, buf, s.type);
 }
 
 static void repr_token(int bufsz, char buf[], Token t)
@@ -515,6 +525,297 @@ void modify_type_imaginary(ParseCtx *p, Type *type)
 
 
 
+/*
+	==========================================================
+		Wrapper generation
+	==========================================================
+*/
+
+
+int is_string(Type t)
+{
+	return t.category == T_CHAR
+		&& !t.explicit_signed
+		&& !t.is_unsigned
+		&& t.is_pointer;
+}
+
+int is_voidptr(Type t)
+{
+	return t.category == T_VOID
+		&& t.is_pointer;
+}
+
+int is_plainvoid(Type t)
+{
+	Type zero = {0};
+	if(t.category == T_VOID){
+		t.category = 0;
+		return !memcmp(&t,&zero,sizeof(t));
+	}
+	return 0;
+}
+
+int is_array(Type t)
+{
+	return !is_string(t) 
+		&& !is_voidptr(t)
+		&& t.is_pointer;
+}
+
+Type basetype(Type t)
+{
+	t.is_pointer = 0;
+	t.is_const = 0;
+	t.is_volatile = 0;
+	t.is_restrict = 0;
+	t.is_pointer_const = 0;
+	t.is_pointer_volatile = 0;
+	t.is_pointer_restrict = 0;
+	return t;
+}
+
+void emit_exceptionhandling(const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[])
+{
+	if(flags.error_handling.active) {
+		
+		if(flags.error_handling.fn) {
+			assert(flags.error_handling.argno >= 0);
+
+			if(flags.error_handling.argno > n_fnargs)
+				die(0, "Error wrapping function '%s' in file '%s': "
+				    "flag -e,%i,%s was specified, but function only has "
+				    "%i arguments", 
+				    fn, flags.filename, 
+				    flags.error_handling.argno, flags.error_handling.fn,
+				    n_fnargs);
+
+			char *exnarg = flags.error_handling.argno == 0 
+				? "rtn"
+				: fnargs[flags.error_handling.argno-1].name;
+
+			printf("    const char *_exn = %s(%s);  \n", flags.error_handling.fn, exnarg);
+			printf("    if(_exn) {  \n");
+			printf("        PyErr_SetString(PyExc_RuntimeError, _exn);  \n");
+			printf("        return 0;  \n");
+			printf("    }  \n");
+		} else {
+			assert(flags.error_handling.argno == 0);
+	
+			printf("    if(rtn) {  \n");
+			printf("        PyErr_SetString(PyExc_RuntimeError, rtn);  \n");
+			printf("        return 0;  \n");
+			printf("    }  \n");
+		}	
+	}
+}
+
+void emit_call(const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[])
+{
+	printf("%s (", fn);
+
+	for(int i = 0; i < n_fnargs; i++)
+	{
+		char *sep  =  i ? ", " : "";
+		printf("%s%s", sep, fnargs[i].name);
+	}
+
+	printf(");\n");
+}
+
+int emit_py_buildvalue_fmt_char(Type t) 
+{
+	if      (t.category == T_CHAR) printf("b");
+	else if (t.category == T_DOUBLE && !t.is_complex && !t.is_imaginary) printf("d");
+	else if (t.category == T_FLOAT && !t.is_complex && !t.is_imaginary) printf("f");
+	else if (t.category == T_SHORT && !t.is_unsigned) printf("h");
+	else if (t.category == T_INT && !t.is_unsigned) printf("i");
+	else if (t.category == T_LONG && !t.is_unsigned) printf("l");
+	else if (t.category == T_LLONG && !t.is_unsigned) printf("L");
+	else if (t.category == T_SHORT) printf("H");
+	else if (t.category == T_INT) printf("I");
+	else if (t.category == T_LONG) printf("k");
+	else if (t.category == T_LLONG) printf("K");
+	else return 0;
+	return 1;
+}
+
+void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[], Type rtntype)
+{
+	assert(n_fnargs >= 0);
+
+	printf("PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
+	printf("    (void) self;\n");
+
+	if(n_fnargs) {
+
+		// keyword name list
+		printf("    static const char *kwlist[] = {");
+	        for(int i = 0; i < n_fnargs; i++)
+			printf("\n        \"%s\",", fnargs[i].name);
+		printf("};\n");
+
+		// declare a C variable for each argument
+		for(int i = 0; i < n_fnargs; i++) {
+			Symbol arg = fnargs[i];
+
+			if (is_string(arg.type)) 
+				printf("    const char * %s = 0;\n", arg.name);
+
+			else if (is_voidptr(arg.type)) {
+				printf("    unsigned long long %s_ull = 0;\n", arg.name);
+				printf("    void * %s = 0;\n", arg.name);
+			}
+
+			else if (is_array(arg.type))
+				printf("    PyArrayObject *%s = NULL;\n", arg.name);
+
+			else {
+				char buf[200] = {0};
+				assert(sizeof(buf) > repr_type(sizeof(buf), buf, arg.type));
+				printf("    %s %s = {0};\n", buf, arg.name);
+			}
+		}
+
+		// parse python arguments into the above declared C variables
+		printf("\n    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"");
+		for (int i = 0; i < n_fnargs; i++) {
+			// building the format string for ParseTupleAndKeywords
+			Symbol arg = fnargs[i];
+
+			if      (is_string(arg.type))  printf("s");
+			else if (is_voidptr(arg.type)) printf("K");
+			else if (is_array(arg.type))   printf("O!");
+			else {
+				Type t = arg.type;
+				if (!emit_py_buildvalue_fmt_char(t)) {
+
+					char buf[200] = {0};
+					assert(sizeof(buf) > repr_type(sizeof(buf), buf, t));
+					die(0, "Error wrapping function '%s' in file '%s': "
+					    "argument %i has type '%s', "
+					    "which wrapgen doesn't know how to convert "
+					    "from python",
+					    fn, flags.filename, i, buf);
+				}
+			}
+		}
+		printf("\", kwlist");
+		for (int i = 0; i < n_fnargs; i++) {
+			// emit addresses for the arguments we actually want
+			printf(",\n        ");
+			Symbol arg = fnargs[i];
+
+			if      (is_string(arg.type))  printf("&%s", arg.name);
+			else if (is_voidptr(arg.type)) printf("&%s_ull", arg.name);
+			else if (is_array(arg.type))   printf("&PyArray_Type, &%s", arg.name);
+			else  printf("&%s", arg.name);
+
+		}
+		printf(")) return 0;\n\n");
+
+		// type checking for any numpy arrays, conversions for any void pointers
+		for (int i = 0; i < n_fnargs; i++)
+		{
+			Symbol arg = fnargs[i];
+
+			if (is_voidptr(arg.type)) 
+				printf("    memcpy(&%s, &%s_ull, sizoef(%s));\n", arg.name, arg.name, arg.name);
+
+			else if (is_array(arg.type)) {
+				char buf[200] = {0};
+				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
+
+				// emit array type check
+				printf("    if(PyArray_TYPE(%s) != C2NPY(%s)) {\n"
+				       "        PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n"
+			               "        return 0;\n"
+				       "    }\n", arg.name, buf, arg.name, buf);
+
+				// emit array contiguity check
+				printf("    if(!PyArray_ISCARRAY(%s)) {\n"
+				       "        PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n"
+			               "        return 0;\n"
+				       "    }\n", arg.name, arg.name);
+			}
+		}
+
+
+	}	
+	else {
+		printf("    (void) args;\n    (void) kwds;\n");
+	}
+	printf("\n");
+
+	// now, emit the actual call
+
+	if (is_plainvoid(rtntype)) {
+
+		printf("    Py_BEGIN_ALLOW_THREADS;\n");
+		printf("    ");
+		emit_call(fn, flags, n_fnargs, fnargs);
+		printf("    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
+		printf("    Py_RETURN_NONE;\n");
+
+	} else if (is_string(rtntype)) {
+
+		char buf[200] = {0};
+		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+
+		printf("    %s rtn = 0;\n", buf);
+		printf("    Py_BEGIN_ALLOW_THREADS;\n");
+		printf("    rtn = ");
+		emit_call(fn, flags, n_fnargs, fnargs);
+		printf("    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
+		printf("    return Py_BuildValue(\"s\", rtn);\n");
+
+	} else if (is_voidptr(rtntype)) {
+
+		char buf[200] = {0};
+		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+
+		printf("    %s rtn = 0;\n", buf);
+		printf("    Py_BEGIN_ALLOW_THREADS;\n");
+		printf("    rtn = ");
+		emit_call(fn, flags, n_fnargs, fnargs);
+		printf("    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
+		printf("    return PyLong_FromVoidPtr(rtn);\n");
+
+	} else if (is_array(rtntype)) {
+
+		char buf[200] = {0};
+		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+
+		die(0, "Error wrapping function '%s' in file '%s': "
+		       "return type '%s' is not supported by wrapgen",
+		       fn, flags.filename, buf);
+
+	} else {
+		char buf[200] = {0};
+		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+
+		printf("    %s rtn = 0;\n", buf);
+		printf("    Py_BEGIN_ALLOW_THREADS;\n");
+		printf("    rtn = ");
+		emit_call(fn, flags, n_fnargs, fnargs);
+		printf("    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
+		printf("    Py_BuildValue(\"");
+		if(!emit_py_buildvalue_fmt_char(rtntype)) {
+			die(0, "Error wrapping function '%s' in file '%s': "
+			       "return type '%s' is not supported by wrapgen",
+			       fn, flags.filename, buf);
+		}
+		printf("\", rtn);\n");
+	}
+
+	printf("}\n\n");
+
+}
+
 
 /*
 	==========================================================
@@ -694,7 +995,10 @@ int arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 	}
 
 	if(eat_token(p,'[')) {
-		modify_type_pointer(p, &tmp.type);
+		if(!modify_type_pointer(p, &tmp.type)) {
+			if(fatal) die(p, "error wrapping function '%s' in '%s': unsupported type", fn, p->args.filename);
+			return 0;
+		}
 		while(1) {
 			if (eat_identifier(p, "static")) {}
 			else if (eat_identifier(p, "const")) {modify_type_const(p, &tmp.type);}
@@ -813,7 +1117,9 @@ void process_function(ParseCtx p)
 		die(&p, "error wrapping function '%s' in '%s': parse error (encountered unrecognized garbage)", fn, p.args.filename);
 
 
-	// TODO actually emit something
+
+	// Parse successful; emit the wrapper!
+	emit_wrapper (fn, p.args, num_args, argsyms, rtn_t);
 }
 
 void parse_file(ParseCtx p, const char *function_name)
@@ -1028,6 +1334,9 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		Token t = {.toktype = lex.token};
 		switch(lex.token)
 		{
+			case CLEX_eof:
+				t.toktype = ';';
+				break;
 			case CLEX_id: 
 			case CLEX_dqstring:
 			case CLEX_sqstring: 		
@@ -1083,6 +1392,7 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		} else if(t.toktype == '}' || t.toktype == ')' || t.toktype == ']') {
 			if(delim_pop(t, text_start, lex.where_firstchar)) {
 				tokens[ntok++] = (Token){.toktype=';'};
+				continue;
 			}
 		}
 
@@ -1091,8 +1401,6 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 		} 
 	}
 
-	if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
-	tokens[ntok++] = (Token){.toktype = ';'};
 	return ntok;
 }
 
