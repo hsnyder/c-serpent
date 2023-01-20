@@ -1581,7 +1581,14 @@ int usage(void)
 	"     a non-null string, that string is assumed to be an error message and a  \n"
 	"     python exception is generated. \n"
 	"                                                                             \n"
-	"     this flag only lasts until the next file change (i.e. -f) \n";
+	"     this flag only lasts until the next file change (i.e. -f) \n"
+	"                                                                             \n"
+	"                                                                             \n"
+	"Environment variables: \n"
+	"                                                                             \n"
+	"WRAPGEN_PP  \n"
+	"     This variable acts like the -p flag (but the -p flag overrides it)      \n"
+	;
 
 	fprintf(stderr, "%s", message);
 }
@@ -1606,10 +1613,13 @@ main (int argc, char *argv[])
 	int emitted_preamble = 0;
 
 	WrapgenArgs args = {.preprocessor = "cc -E"};
-	int ntok = 0;
+	if (getenv("WRAPGEN_PP")) 
+		args.preprocessor = getenv("WRAPGEN_PP");
 
 	const char *fnames[200] = {0};
 	int n_fnames = 0;
+
+	int ntok = 0;
 
 	while (*argv) {
 		if (!strcmp(*argv, "-h")) {
