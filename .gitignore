@@ -7,3 +7,6 @@
 *.swp
 tags
 wrapgen
+*.py
+*.so
+*.test.c
