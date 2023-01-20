@@ -10,3 +10,4 @@ wrapgen
 *.py
 *.so
 *.test.c
+*.test.sh
