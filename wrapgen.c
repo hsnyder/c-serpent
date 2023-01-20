@@ -836,7 +836,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 			Symbol arg = fnargs[i];
 
 			if (is_voidptr(arg.type)) 
-				printf("    memcpy(&%s, &%s_ull, sizoef(%s));\n", arg.name, arg.name, arg.name);
+				printf("    memcpy(&%s, &%s_ull, sizeof(%s));\n", arg.name, arg.name, arg.name);
 
 			else if (is_array(arg.type)) {
 				char buf[200] = {0};
