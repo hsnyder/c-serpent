@@ -1559,6 +1559,11 @@ int usage(void)
 	"-m   the following argument is the name of the module to be built \n"
 	"     only one module per wrapgen invocation is allowed  \n"
 	"                                                                             \n"
+	"-x   if you have some extra handwritten wrappers, you can use '-x whatever'  \n"
+	"     to include the function 'whatever' (calling 'wrap_whatever') in the     \n"
+	"     generated module. You'll need to prepend the necessary code to the file \n"
+	"     that wrapgen generates. \n"
+	"                                                                             \n"
 	"-f   the following argument is a filename. \n"
 	"                                                                             \n"
 	"-p   the following argument specifies the preprocessor to use for the next \n"
@@ -1683,6 +1688,20 @@ main (int argc, char *argv[])
 			}
 			continue;
 		}
+	
+		if (!strcmp(*argv, "-x")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				fnames[n_fnames++] = *argv;
+				if(n_fnames == COUNT_ARRAY(fnames)) 
+					die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
+				argv++;
+			} else {
+				die(0, "-x flag must be followed by a function name");
+			}
+			continue;
+		}
+
 
 		if (!strcmp(*argv, "-p")) { 
 			argv++;
