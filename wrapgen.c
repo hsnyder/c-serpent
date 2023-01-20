@@ -743,7 +743,10 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 
 		printf("%s %s (", buf, fn);
 
-		for(int i = 0; i < n_fnargs; i++)
+		if (n_fnargs == 0) 
+			printf("void");
+
+		else for(int i = 0; i < n_fnargs; i++)
 		{
 			memset(buf,0,sizeof(buf));
 			assert(sizeof(buf) > repr_type(sizeof(buf), buf, fnargs[i].type));
@@ -751,6 +754,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 			char * sep  =  i ? ", " : "";
 			printf("%s%s %s", sep, buf, fnargs[i].name);
 		}
+
 
 		printf(");\n");
 	}
@@ -915,7 +919,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 		emit_call(fn, flags, n_fnargs, fnargs);
 		printf("    Py_END_ALLOW_THREADS;\n");
 		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
-		printf("    Py_BuildValue(\"");
+		printf("    return Py_BuildValue(\"");
 		if(!emit_py_buildvalue_fmt_char(rtntype)) {
 			die(0, "Error wrapping function '%s' in file '%s': "
 			       "return type '%s' is not supported by wrapgen",
