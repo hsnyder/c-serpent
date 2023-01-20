@@ -1416,7 +1416,7 @@ int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long
 	} else {
 
 		// read via popen to preprocessor command
-		char cmd[200] = {0};
+		char cmd[4096] = {0};
 		if(sizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
 			die(0, "internal buffer overflow");
 		
