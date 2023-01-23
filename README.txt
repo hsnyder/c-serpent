@@ -34,19 +34,37 @@ For example, consider this C function:
 
 The resulting wrapper will accept a Python integer for `N`, and a
 numpy array with `dtype=numpy.int32` for `array`. An exception will
-be raised if the types don't match.
+be raised if the types don't match. The emitted code for this example:
 
-
-Usage
------
-
-Compile wrapgen, then run `wrapgen -h` for detailed usage information.
-Typical usage example: 
-
-  $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
-  $ cc -fPIC -shared -I/path/to/python/headers \
-        wrappers.c my_c_file.c \
-        -lpython -o coolmodule.so
+    double  mean_i32 (int  N, int * array);
+    PyObject * wrap_mean_i32 (PyObject *self, PyObject *args, PyObject *kwds)
+    {
+        (void) self;
+        static char *kwlist[] = {
+            "N",
+            "array",0};
+        int  N = {0};
+        PyArrayObject *array = NULL;
+    
+        if(!PyArg_ParseTupleAndKeywords(args, kwds, "iO!", kwlist,
+            &N,
+            &PyArray_Type, &array)) return 0;
+    
+        if(PyArray_TYPE(array) != C2NPY(int )) {
+            PyErr_SetString(PyExc_ValueError, "Invalid array data type for argument 'array' (expected int )");
+            return 0;
+        }
+        if(!PyArray_ISCARRAY(array)) {
+            PyErr_SetString(PyExc_ValueError, "Argument 'array' is not C-contiguous");
+            return 0;
+        }
+    
+        double  rtn = 0;
+        Py_BEGIN_ALLOW_THREADS;
+        rtn = mean_i32 (N, PyArray_DATA(array));
+        Py_END_ALLOW_THREADS;
+        return Py_BuildValue("d", rtn);
+    }
 
 
 Compiling
@@ -55,3 +73,81 @@ Compiling
 Just point your C compiler at wrapgen.c. For example on a unix-derivative, 
 
   $ cc -g wrapgen.c -o wrapgen 
+        
+
+Usage
+-----
+
+Typical usage example: 
+
+  $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
+  $ cc -fPIC -shared -I/path/to/python/headers \
+       wrappers.c my_c_file.c \
+       -lpython -o coolmodule.so
+
+Wrapgen processes its input arguments in-order. First specify the name of the
+output python module (which must match the name of the shared library that
+you compile) by using the argument sequence '-m modulename'. Then, specify
+at least one file, using '-f filename.c'. Then, list the names of the 
+functions that you wish to generate wrappers for. You can specify multiple
+files like so: '-f minmax.c min max -f avg.c mean median'. The functions are
+assumed to be contained in the file specified by the most recent '-f' flag.
+
+Wrapgen invokes the system preprocessor and scans for typedefs in the 
+resulting file. It only understands a subset of all possible C typedefs, but
+it works for stdint, size_t, and so on. The preprocessor to use is 'cc -E' 
+by default, but this can be overridden with the -p flag, or the WRAPGEN_PP
+environment variable (the latter takes precedence if both are supplied).
+
+Flags: 
+                                                                             
+-h   print help message and exit  
+
+-m   the following argument is the name of the module to be built 
+     only one module per wrapgen invocation is allowed.
+                                                                             
+-f   the following argument is a filename.
+                                                                             
+-v   verbose (prints a list of typedefs that were parsed, for debugging).
+                                                                             
+-D   disable including declarations for the functions to be wrapped in the 
+     generated wrapper file this might be used to facilitate amalgamation 
+     builds, for example.
+                                                                                                                                                         
+-x   if you have some extra handwritten wrappers, you can use '-x whatever'  
+     to include the function 'whatever' (calling 'wrap_whatever') in the     
+     generated module. You'll need to prepend the necessary code to the file 
+     that wrapgen generates.
+                                                                             
+-p   the following argument specifies the preprocessor to use for future 
+     files, if different from the default 'cc -E'. Use quotes if you need
+     to include spaces in the preprocessor command.
+                                                                             
+-P   disable preprocessing of the next file encountered. This flag only lasts 
+     until the next file change (i.e. -f).
+                                                                             
+-i   the following argument is a filename, to be inlcuded before the next  
+     file processed (for use with -P).
+                                                                             
+-I   the following argument is a directory path, to be searched for any  
+     future -i flags.
+                                                                             
+-e   for functions that follow: if they return a string (const char *), the  
+     string is to be interpreted as an error message (if not null) and a python
+     exception should be thrown.
+                                                                             
+     this flag only lasts until the next file change (i.e. -f) 
+                                                                             
+-e,n,chkfn   for functions that follow: after calling, another function called
+     chkfn should be called.  chkfn should have the signature  
+     'const char * checkfn (?)' where ? is the type of the n-th argument to the
+     function (0 means the function's return value). if the chkfn call returns
+     a non-null string, that string is assumed to be an error message and a  
+     python exception is generated. 
+                                                                             
+     this flag only lasts until the next file change (i.e. -f) 
+                                                                             
+Environment variables: 
+                                                                             
+WRAPGEN_PP  
+     This variable acts like the -p flag (but the -p flag overrides it) 
