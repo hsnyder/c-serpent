@@ -6,7 +6,7 @@
 *.bak
 *.swp
 tags
-wrapgen
+c-serpent
 *.py
 *.so
 *.test.c

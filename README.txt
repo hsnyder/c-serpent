@@ -1,13 +1,13 @@
-WRAPGEN
-=======
+C-SERPENT
+=========
 
-Wrapgen is a tool designed to make it easier to call C code from Python.
-Given a list of files and functions contained within those files, wrapgen
+C-serpent is a tool designed to make it easier to call C code from Python.
+Given a list of files and functions contained within those files, c-serpent
 generates code (using the Python C API) that can be compiled into a Python
 extension module, and which allows Python code to call the specified C 
 functions.
 
-Wrapgen is not intended to be completely general-purpose. In particular:
+C-serpent is not intended to be completely general-purpose. In particular:
 
  - It only supports wrapping a subset of all possible C function signatures. 
    In practice, the limitations are probably acceptable for 95+% of cases.
@@ -70,9 +70,9 @@ be raised if the types don't match. The emitted code for this example:
 Compiling
 ---------
 
-Just point your C compiler at wrapgen.c. For example on a unix-derivative, 
+Just point your C compiler at c-serpent.c. For example on a unix-derivative, 
 
-  $ cc -g wrapgen.c -o wrapgen 
+  $ cc -g c-serpent.c -o c-serpent 
         
 
 Usage
@@ -80,12 +80,12 @@ Usage
 
 Typical usage example: 
 
-  $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
+  $ c-serpent -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
   $ cc -fPIC -shared -I/path/to/python/headers \
        wrappers.c my_c_file.c \
        -lpython -o coolmodule.so
 
-Wrapgen processes its input arguments in-order. First specify the name of the
+C-serpent processes its input arguments in-order. First specify the name of the
 output python module (which must match the name of the shared library that
 you compile) by using the argument sequence '-m modulename'. Then, specify
 at least one file, using '-f filename.c'. Then, list the names of the 
@@ -93,10 +93,10 @@ functions that you wish to generate wrappers for. You can specify multiple
 files like so: '-f minmax.c min max -f avg.c mean median'. The functions are
 assumed to be contained in the file specified by the most recent '-f' flag.
 
-Wrapgen invokes the system preprocessor and scans for typedefs in the 
+C-serpent invokes the system preprocessor and scans for typedefs in the 
 resulting file. It only understands a subset of all possible C typedefs, but
 it works for stdint, size_t, and so on. The preprocessor to use is 'cc -E' 
-by default, but this can be overridden with the -p flag, or the WRAPGEN_PP
+by default, but this can be overridden with the -p flag, or the CSERPENT_PP
 environment variable (the latter takes precedence if both are supplied).
 
 Flags: 
@@ -104,7 +104,7 @@ Flags:
 -h   print help message and exit  
 
 -m   the following argument is the name of the module to be built 
-     only one module per wrapgen invocation is allowed.
+     only one module per c-serpent invocation is allowed.
                                                                              
 -f   the following argument is a filename.
                                                                              
@@ -117,7 +117,7 @@ Flags:
 -x   if you have some extra handwritten wrappers, you can use '-x whatever'  
      to include the function 'whatever' (calling 'wrap_whatever') in the     
      generated module. You'll need to prepend the necessary code to the file 
-     that wrapgen generates.
+     that c-serpent generates.
                                                                              
 -p   the following argument specifies the preprocessor to use for future 
      files, if different from the default 'cc -E'. Use quotes if you need
@@ -149,5 +149,5 @@ Flags:
                                                                              
 Environment variables: 
                                                                              
-WRAPGEN_PP  
+CSERPENT_PP  
      This variable acts like the -p flag (but the -p flag overrides it) 

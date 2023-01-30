@@ -104,14 +104,14 @@ typedef struct
 		int nfiles;
 	} manual_include;
 
-} WrapgenArgs;
+} CSerpentArgs;
 
 
 typedef struct {
 	Token     *tokens;   
 	Token     *tokens_end;
 	Token     *tokens_first;   
-	WrapgenArgs args;
+	CSerpentArgs args;
 } ParseCtx;
 
 /*
@@ -545,7 +545,7 @@ void modify_type_imaginary(ParseCtx *p, Type *type)
 	==========================================================
 */
 
-void emit_module(WrapgenArgs flags, int n_fnames, const char *fnames[])
+void emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[])
 {
 	if(!flags.modulename) return;
 
@@ -594,7 +594,7 @@ void emit_module(WrapgenArgs flags, int n_fnames, const char *fnames[])
 	"} \n", flags.modulename, flags.modulename);
 }
 
-void emit_preamble(WrapgenArgs flags)
+void emit_preamble(CSerpentArgs flags)
 {
 	(void) flags;
 	static const char * preamble = 
@@ -664,7 +664,7 @@ Type basetype(Type t)
 	return t;
 }
 
-void emit_exceptionhandling(const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[])
+void emit_exceptionhandling(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
 {
 	if(flags.error_handling.active) {
 		
@@ -699,7 +699,7 @@ void emit_exceptionhandling(const char *fn, WrapgenArgs flags, int n_fnargs, Sym
 	}
 }
 
-void emit_call(const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[])
+void emit_call(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
 {
 	printf("%s (", fn);
 
@@ -732,7 +732,7 @@ int emit_py_buildvalue_fmt_char(Type t)
 	return 1;
 }
 
-void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnargs[], Type rtntype)
+void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[], Type rtntype)
 {
 	assert(n_fnargs >= 0);
 
@@ -810,7 +810,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 					assert(sizeof(buf) > repr_type(sizeof(buf), buf, t));
 					die(0, "Error wrapping function '%s' in file '%s': "
 					    "argument %i has type '%s', "
-					    "which wrapgen doesn't know how to convert "
+					    "which c-serpent doesn't know how to convert "
 					    "from python",
 					    fn, flags.filename, i, buf);
 				}
@@ -906,7 +906,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		die(0, "Error wrapping function '%s' in file '%s': "
-		       "return type '%s' is not supported by wrapgen",
+		       "return type '%s' is not supported by c-serpent",
 		       fn, flags.filename, buf);
 
 	} else {
@@ -922,7 +922,7 @@ void emit_wrapper (const char *fn, WrapgenArgs flags, int n_fnargs, Symbol fnarg
 		printf("    return Py_BuildValue(\"");
 		if(!emit_py_buildvalue_fmt_char(rtntype)) {
 			die(0, "Error wrapping function '%s' in file '%s': "
-			       "return type '%s' is not supported by wrapgen",
+			       "return type '%s' is not supported by c-serpent",
 			       fn, flags.filename, buf);
 		}
 		printf("\", rtn);\n");
@@ -1356,7 +1356,7 @@ int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP,
 int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
-int lex_file(WrapgenArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+int lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
 
@@ -1532,17 +1532,17 @@ void usage(void)
 {
 	const char *message = 
 
-	"wrapgen \n"
-	"======= \n"
+	"c-serpent \n"
+	"========= \n"
 	"                                                                             \n"
 	"Typical usage:  \n"
-	" $ wrapgen -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   \n"
+	" $ c-serpent -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   \n"
 	" $ cc -fPIC -shared -I/path/to/python/headers \\\n"
 	"       wrappers.c my_c_file.c \\\n"
 	"       -lpython -o coolmodule.so\n"
 	"                                                                             \n"
 
-	"Wrapgen processes its input arguments in-order. First specify the name of the  \n"
+	"C-serpent processes its input arguments in-order. First specify the name of the  \n"
 	"output python module (which must match the name of the shared library that  \n"
 	"you compile) by using the argument sequence '-m modulename'. Then, specify  \n"
 	"at least one file, using '-f filename.c'. Then, list the names of the   \n"
@@ -1550,10 +1550,10 @@ void usage(void)
 	"files like so: '-f minmax.c min max -f avg.c mean median'. The functions are  \n"
 	"assumed to be contained in the file specified by the most recent '-f' flag.  \n"
 	"  \n"
-	"Wrapgen invokes the system preprocessor and scans for typedefs in the   \n"
+	"C-serpent invokes the system preprocessor and scans for typedefs in the   \n"
 	"resulting file. It only understands a subset of all possible C typedefs, but  \n"
 	"it works for stdint, size_t, and so on. The preprocessor to use is 'cc -E'   \n"
-	"by default, but this can be overridden with the -p flag, or the WRAPGEN_PP  \n"
+	"by default, but this can be overridden with the -p flag, or the CSERPENT_PP  \n"
 	"environment variable (the latter takes precedence if both are supplied).  \n"
 	"  \n"
 	"Flags:   \n"
@@ -1561,7 +1561,7 @@ void usage(void)
 	"-h   print help message and exit    \n"
 	"  \n"
 	"-m   the following argument is the name of the module to be built   \n"
-	"     only one module per wrapgen invocation is allowed.  \n"
+	"     only one module per c-serpent invocation is allowed.  \n"
 	"                                                                               \n"
 	"-f   the following argument is a filename.  \n"
 	"                                                                               \n"
@@ -1574,7 +1574,7 @@ void usage(void)
 	"-x   if you have some extra handwritten wrappers, you can use '-x whatever'    \n"
 	"     to include the function 'whatever' (calling 'wrap_whatever') in the       \n"
 	"     generated module. You'll need to prepend the necessary code to the file   \n"
-	"     that wrapgen generates.  \n"
+	"     that c-serpent generates.  \n"
 	"                                                                               \n"
 	"-p   the following argument specifies the preprocessor to use for future   \n"
 	"     files, if different from the default 'cc -E'. Use quotes if you need  \n"
@@ -1606,7 +1606,7 @@ void usage(void)
 	"                                                                               \n"
 	"Environment variables:   \n"
 	"                                                                               \n"
-	"WRAPGEN_PP    \n"
+	"CSERPENT_PP    \n"
 	"     This variable acts like the -p flag (but the -p flag overrides it)   \n"
 
 	;
@@ -1634,9 +1634,9 @@ main (int argc, char *argv[])
 
 	int emitted_preamble = 0;
 
-	WrapgenArgs args = {.preprocessor = "cc -E"};
-	if (getenv("WRAPGEN_PP")) 
-		args.preprocessor = getenv("WRAPGEN_PP");
+	CSerpentArgs args = {.preprocessor = "cc -E"};
+	if (getenv("CSERPENT_PP")) 
+		args.preprocessor = getenv("CSERPENT_PP");
 
 	const char *fnames[200] = {0};
 	int n_fnames = 0;
@@ -1670,7 +1670,7 @@ main (int argc, char *argv[])
 		if (!strcmp(*argv, "-I")) { 
 			argv++;
 			if(*argv && **argv != '-') {
-				if(args.ndirs == COUNT_ARRAY(args.dirs)) die(0, "A maximum of %i -I flags can be used in a single wrapgen invocation.", (int)COUNT_ARRAY(args.dirs));
+				if(args.ndirs == COUNT_ARRAY(args.dirs)) die(0, "A maximum of %i -I flags can be used in a single c-serpent invocation.", (int)COUNT_ARRAY(args.dirs));
 				args.dirs[args.ndirs++] = *argv;
 				argv++;
 			} else {
@@ -1707,7 +1707,7 @@ main (int argc, char *argv[])
 			if(*argv && **argv != '-') {
 				fnames[n_fnames++] = *argv;
 				if(n_fnames == COUNT_ARRAY(fnames)) 
-					die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
+					die(0, "error: c-serpent only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 				argv++;
 			} else {
 				die(0, "-x flag must be followed by a function name");
@@ -1788,7 +1788,7 @@ main (int argc, char *argv[])
 
 		fnames[n_fnames++] = *argv;
 		if(n_fnames == COUNT_ARRAY(fnames)) 
-			die(0, "error: wrapgen only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
+			die(0, "error: c-serpent only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 
 		ParseCtx p = {
 			.tokens_first  =  tokens,
