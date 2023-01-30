@@ -1,3 +1,5 @@
+<img src='https://github.com/hsnyder/c-serpent/blob/master/logo.png' height=128 width=128 />
+
 C-SERPENT
 =========
 
@@ -72,7 +74,7 @@ Compiling
 
 Just point your C compiler at c-serpent.c. For example on a unix-derivative, 
 
-  $ cc -g c-serpent.c -o c-serpent 
+    $ cc -g c-serpent.c -o c-serpent 
         
 
 Usage
@@ -80,10 +82,10 @@ Usage
 
 Typical usage example: 
 
-  $ c-serpent -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
-  $ cc -fPIC -shared -I/path/to/python/headers \
-       wrappers.c my_c_file.c \
-       -lpython -o coolmodule.so
+    $ c-serpent -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
+    $ cc -fPIC -shared -I/path/to/python/headers \
+         wrappers.c my_c_file.c \
+         -lpython -o coolmodule.so
 
 C-serpent processes its input arguments in-order. First specify the name of the
 output python module (which must match the name of the shared library that
