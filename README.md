@@ -1,4 +1,4 @@
-<img align='center' src='https://github.com/hsnyder/c-serpent/blob/master/logo.png' height=128 width=128 />
+<img src='https://github.com/hsnyder/c-serpent/blob/master/logo.png' height=128 width=128 />
 
 C-SERPENT
 =========
