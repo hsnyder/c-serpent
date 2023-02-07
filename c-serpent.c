@@ -17,6 +17,10 @@
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
 
+#define MAX_FN_ARGS 40
+#define MAX_DIRS 40
+#define MAX_FILES 40
+
 enum type_category {
 	T_UNINITIALIZED = 0,
 	T_UNKNOWN,
@@ -71,6 +75,12 @@ typedef struct {
 	Type type;
 } Symbol;
 
+typedef struct {
+	Type type;
+	char suffix; 
+	char found;
+} VariantSuffix;
+
 typedef struct { // lexer token
 
 	long toktype; // this will be one of the enum values in stb_c_lexer
@@ -90,7 +100,8 @@ typedef struct
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
-	const char *dirs[40];
+	int generic;
+	const char *dirs[MAX_DIRS];
 	int ndirs;
 
 	struct {
@@ -100,7 +111,7 @@ typedef struct
 	} error_handling;
 
 	struct {
-		const char *files[40];
+		const char *files[MAX_FILES];
 		int nfiles;
 	} manual_include;
 
@@ -113,6 +124,7 @@ typedef struct {
 	Token     *tokens_first;   
 	CSerpentArgs args;
 } ParseCtx;
+
 
 /*
 	==========================================================
@@ -520,6 +532,7 @@ void modify_type_complex(ParseCtx *p, Type *type)
 	if(type->category >= T_CHAR && type->category < T_FLOAT) die(p, "'_Complex' doesn't make sense with integer types");
 	if(type->is_imaginary) die(p, "'_Complex' doesn't make sense with '_Imaginary'");
 	type->is_complex = 1;
+	// TODO check against struct/union?
 }
 
 void modify_type_imaginary(ParseCtx *p, Type *type)
@@ -528,7 +541,40 @@ void modify_type_imaginary(ParseCtx *p, Type *type)
 	if(type->category >= T_CHAR && type->category < T_FLOAT) die(p, "'_Imaginary' doesn't make sense with integer types");
 	if(type->is_complex) die(p, "'_Imaginary' doesn't make sense with '_Complex'");
 	type->is_imaginary = 1;
+	// TODO check against struct/union?
 }
+
+int compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int compare_volatile, int compare_restrict) 
+{
+	if(a.category != b.category) return 0;
+
+	if(a.category == T_FLOAT || a.category == T_DOUBLE || a.category == T_LDOUBLE) {
+
+		if  (a.is_complex   != b.is_complex)     return 0;
+		if  (a.is_imaginary != b.is_imaginary)  return 0;
+
+	} else if (a.category >= T_CHAR && a.category <= T_LLONG) {
+
+		if (a.is_unsigned != b.is_unsigned) return 0;
+
+	}
+
+	if (compare_const) if (a.is_const != b.is_const) return 0;
+	if (compare_volatile) if (a.is_volatile != b.is_volatile) return 0;
+	if (compare_restrict) if (a.is_restrict != b.is_restrict) return 0;
+
+	if (compare_pointer) {
+		if (a.is_pointer != b.is_pointer) return 0;
+
+		if (compare_const) if (a.is_pointer_const != b.is_pointer_const) return 0;
+		if (compare_volatile) if (a.is_pointer_volatile != b.is_pointer_volatile) return 0;
+		if (compare_restrict) if (a.is_pointer_restrict != b.is_pointer_restrict) return 0;
+	}
+
+	return 1;
+}
+
+
 
 
 /*
@@ -932,6 +978,113 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 }
 
+void emit_dispatch_wrapper (
+	ParseCtx p,
+	const char *fn, 
+	int n_variants_implemented,
+	short arg_match_count[static MAX_FN_ARGS],
+	int n_supported_suffixes,
+	VariantSuffix suffixes[],
+	Symbol fnargs[static MAX_FN_ARGS] ) 
+{
+
+	// emit a very general wrapper that just dispatches based on the type of the first argument that matches the suffix in all implementations 
+	
+	int idx_first_covariant_arg = -1;
+	int n_args = 0;
+
+	// try to find a covariant array argument first, only use scalar as a backup
+	for (int i = MAX_FN_ARGS-1; i >= 0; i--) {
+		if (arg_match_count[i] == n_variants_implemented && fnargs[i].type.is_pointer) 
+			idx_first_covariant_arg = i;
+		if (fnargs[i].type.category != T_UNINITIALIZED && fnargs[i].type.category != T_UNKNOWN)
+			n_args++;
+	}
+
+	if (idx_first_covariant_arg < 0) 
+		for (int i = MAX_FN_ARGS-1; i >= 0; i--) 
+			if (arg_match_count[i] == n_variants_implemented) 
+				idx_first_covariant_arg = i;
+
+	// but there does need to be at least ONE covariant arg... 
+	if (idx_first_covariant_arg < 0) 
+		die(&p, "couldn't generate generic wrapper for '%s', no argument correctly matches suffix in all implemented variants.", fn);
+
+	Type key_arg = fnargs[idx_first_covariant_arg].type;
+
+	printf("PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
+
+	printf("    PyObject *arglist[%i] = {0};\n", n_args);
+
+	// keyword name list
+	printf("    static char *kwlist[] = {");
+	for(int i = 0; i < n_args; i++)
+		printf("\n        \"%s\",", fnargs[i].name);
+	printf("0};\n");
+
+	// extract args
+	printf("    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"" );
+	for (int i = 0; i < n_args; i++) printf("O");
+	printf("\", kwlist");
+	for (int i = 0; i < n_args; i++) printf(",&arglist[%i]", i);
+	printf(")) return 0;\n");
+
+	// emit dispatch if statements
+	for (int i = 0; i < n_supported_suffixes; i++) {
+
+		if(suffixes[i].found) {
+
+			if(key_arg.is_pointer) {
+
+				char buf[200] = {0};
+				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(suffixes[i].type)));
+				// array 
+				printf("    if (PyArray_Check(arglist[%i]) && PyArray_TYPE((PyArrayObject*)arglist[%i]) == C2NPY(%s)) {\n", idx_first_covariant_arg, idx_first_covariant_arg, buf);
+
+				printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+
+				printf("    } else ");
+
+			} else {
+
+				// non-array
+
+				// PyLong
+				if (suffixes[i].type.category >= T_CHAR && suffixes[i].type.category <= T_LLONG) {
+					printf("    if (PyLong_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+					printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+					printf("    } else ");
+				}
+
+				// PyFloat / PyComplex
+				else if (suffixes[i].type.category >= T_FLOAT && suffixes[i].type.category <= T_LDOUBLE) {
+
+					if (suffixes[i].type.is_complex) {
+						printf("    if (PyComplex_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+						printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+						printf("    } else ");
+					} else {
+						printf("    if (PyFloat_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+						printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+						printf("    } else ");
+					}
+				}
+
+				// ..wat?
+				else {
+					char buf[200] = {0};
+					assert(sizeof(buf) > repr_type(sizeof(buf), buf, key_arg));
+					die(&p, "error generating dispatcher for '%s' unsupported scalar argument type '%s'", fn, buf);
+				}
+				
+			}
+		}
+	}
+
+	printf("{\n        PyErr_SetString(PyExc_ValueError, \"No instance of generic function '%s' matches supplied argument types\");\n        return 0;\n    }\n", fn);
+
+	printf("}\n");
+}
 
 /*
 	==========================================================
@@ -1201,7 +1354,7 @@ void attributes(ParseCtx *p, const char *fn)
 	}
 }
 
-void process_function(ParseCtx p)
+void process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 {
 	// on entry, p.tokens is set right on the function name.	
 	const char * fn = p.tokens[0].string;
@@ -1210,7 +1363,7 @@ void process_function(ParseCtx p)
 	p.tokens++;
 
 	Type rtn_t = {0};
-	Symbol argsyms[40] = {0};
+	memset(argsyms, 0, MAX_FN_ARGS*sizeof(argsyms[0]));
 
 	if(!supported_type_list(&p, &rtn_t))
 		die(&p, "error wrapping function '%s' in '%s': unsupported return type", fn, p.args.filename);
@@ -1222,8 +1375,8 @@ void process_function(ParseCtx p)
 		die(&p, "error wrapping function '%s' in '%s': parse error (encountered unrecognized garbage)", fn, p.args.filename);
 
 	int num_args = 0;
-	if(!arglist(&p, fn, 40, &num_args, argsyms, 0)) {
-		arglist(&p, fn, 40, &num_args, argsyms, 1);
+	if(!arglist(&p, fn, MAX_FN_ARGS, &num_args, argsyms, 0)) {
+		arglist(&p, fn, MAX_FN_ARGS, &num_args, argsyms, 1);
 		die(&p, "error wrapping function '%s' in '%s': parse error (couldn't parse argument list)", fn, p.args.filename);
 	}
 
@@ -1232,25 +1385,23 @@ void process_function(ParseCtx p)
 	if(!eat_token(&p, ';'))
 		die(&p, "error wrapping function '%s' in '%s': parse error (encountered unrecognized garbage)", fn, p.args.filename);
 
-
-
-	// Parse successful; emit the wrapper!
+	// Parse successful, emit the wrapper!
 	emit_wrapper (fn, p.args, num_args, argsyms, rtn_t);
 }
 
-void parse_file(ParseCtx p, const char *function_name)
+int parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_ARGS])
 {
 	long len = strlen(function_name);
 
 	while (p.tokens != p.tokens_end) {
 		if (check_token_is_identifier(p.tokens, function_name, len) )
 		{
-			process_function(p);
-			return;
+			process_function(p, argsyms);
+			return 1;
 		}
 		p.tokens++;
 	}
-	die(0, "didn't find function called '%s' in file '%s'", function_name, p.args.filename);
+	return 0;
 }
 
 
@@ -1589,6 +1740,10 @@ void usage(void)
 	"-I   the following argument is a directory path, to be searched for any    \n"
 	"     future -i flags.  \n"
 	"                                                                               \n"
+	"-g   functions that follow are \"generic\". This is explained fully below.      \n"
+	"                                                                               \n"
+	"     this flag only lasts until the next file change (i.e. -f)   \n"
+	"                                                                               \n"
 	"-e   for functions that follow: if they return a string (const char *), the    \n"
 	"     string is to be interpreted as an error message (if not null) and a python  \n"
 	"     exception should be thrown.  \n"
@@ -1609,6 +1764,48 @@ void usage(void)
 	"CSERPENT_PP    \n"
 	"     This variable acts like the -p flag (but the -p flag overrides it)   \n"
 
+	"                                                                               \n"
+	"Generic functions:   \n"
+	"                                                                               \n"
+	"     If you have several copies of a function that accept arguments that are   \n"
+	"     of different data types, then c-serpent may be able to automatically      \n"
+	"     generate a disapatch function for you, that allows it to be called from   \n"
+	"     python in a type-generic way. In order to use this feature, your function \n"
+	"     must use a function-name suffix to indicate the data type, following this \n"
+	"     convention: \n"
+	"                                                                               \n"
+        "       type            suffix \n"
+        "       ----            ------ \n"
+        "       int8            b \n"
+        "       int16           s \n"
+        "       int32           i \n"
+        "       int64           l \n"
+        "        \n"
+        "       uint8           B \n"
+        "       uint16          S \n"
+        "       uint32          I \n"
+        "       uint64          L \n"
+        "        \n"
+        "       float           f \n"
+        "       double          d \n"
+        "        \n"
+        "       complex float   F \n"
+        "       complex double  D \n"
+	"                                                                               \n"
+	"     You do not need to supply all of these variants; c-serpent will support   \n"
+	"     whichever variants it finds. \n"
+	"                                                                               \n"
+	"     Example: consider: $ ./c-serpent -m mymodule -f whatever.c -g mean        \n"
+	"     If whatever.c contains the following functions, then python code will be  \n"
+	"     able to call `mymodule.mean(N, arr)` where arr is a float or double array \n"
+	"                                                                               \n"
+	"       double meanf(int N, float *arr);                                        \n"
+	"       double meand(int N, double *arr);                                       \n"
+	"                                                                               \n"
+	"     C-serpent will try to figure out which arguments change according to the  \n"
+	"     convention and which do not. Return values may also change.               \n"
+	"                                                                               \n"
+	"     Lastly, the type-specific versions of the function do still get wrapped.  \n"
 	;
 
 	fprintf(stderr, "%s", message);
@@ -1651,6 +1848,12 @@ main (int argc, char *argv[])
 
 		if (!strcmp(*argv, "-v")) {
 			args.verbose = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-g")) {
+			args.generic = 1;
 			argv++;
 			continue;
 		}
@@ -1747,6 +1950,7 @@ main (int argc, char *argv[])
 					.args = args,
 				});
 				args.disable_pp = 0;
+				args.generic = 0;
 				memset(&args.manual_include, 0, sizeof(args.manual_include));
 				argv++;
 			} else {
@@ -1788,7 +1992,7 @@ main (int argc, char *argv[])
 
 		fnames[n_fnames++] = *argv;
 		if(n_fnames == COUNT_ARRAY(fnames)) 
-			die(0, "error: c-serpent only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
+			die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
 
 		ParseCtx p = {
 			.tokens_first  =  tokens,
@@ -1797,7 +2001,70 @@ main (int argc, char *argv[])
 			.args = args,
 		};
 
-		parse_file(p, *argv);
+		Symbol argsyms[MAX_FN_ARGS] = {0};
+
+		if(args.generic) {
+
+			int n_variants_found = 0;
+			VariantSuffix variant_suffixes[] = {
+
+				/*
+					The order is important here.
+					For scalar arguments, the generated dispatcher will call
+					the first version that appears.
+				*/
+
+				{get_symbol("int64_t")->type, 'l'},
+				{get_symbol("int32_t")->type, 'i'},
+				{get_symbol("int16_t")->type, 's'},
+				{get_symbol("int8_t")->type,  'b'},
+
+				{get_symbol("uint64_t")->type, 'L'},
+				{get_symbol("uint32_t")->type, 'I'},
+				{get_symbol("uint16_t")->type, 'S'},
+				{get_symbol("uint8_t")->type,  'B'},
+
+				{(Type){.category=T_DOUBLE}, 'd'},
+				{(Type){.category=T_FLOAT},  'f'},
+
+				{(Type){.category=T_DOUBLE, .is_complex=1}, 'D'},
+				{(Type){.category=T_FLOAT, .is_complex=1},  'F'},
+			};
+
+
+			short arg_match_count[MAX_FN_ARGS] = {0}; 
+
+			for (int i = 0; i < COUNT_ARRAY(variant_suffixes); i++) {
+
+				char namebuf[500] = {0};	
+				snprintf(namebuf, sizeof(namebuf), "%s%c", *argv, variant_suffixes[i].suffix);
+
+				if (parse_file(p, namebuf, argsyms)) {
+
+					fnames[n_fnames++] = intern(namebuf, 0) ;
+					if(n_fnames == COUNT_ARRAY(fnames)) 
+						die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
+
+					variant_suffixes[i].found = 1;
+					n_variants_found++;
+
+					for (int j = 0; j < MAX_FN_ARGS; j++) {
+						arg_match_count[j] += compare_types_equal(argsyms[j].type, variant_suffixes[i].type, 0,0,0,0);
+					}
+				}
+			}
+
+			if (n_variants_found == 0) 
+				die(0, "didn't find any variants of a function called '%s' in file '%s' that followed the required suffix convention", *argv, p.args.filename);
+
+			emit_dispatch_wrapper(p, *argv, n_variants_found, arg_match_count, COUNT_ARRAY(variant_suffixes), variant_suffixes, argsyms);
+
+
+		} else if(!parse_file(p, *argv, argsyms)) {
+
+			die(0, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
+		}
+
 		argv++;
 	}
 

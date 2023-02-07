@@ -101,55 +101,101 @@ it works for stdint, size_t, and so on. The preprocessor to use is 'cc -E'
 by default, but this can be overridden with the -p flag, or the CSERPENT_PP
 environment variable (the latter takes precedence if both are supplied).
 
-Flags: 
-                                                                             
-    -h   print help message and exit  
-    
-    -m   the following argument is the name of the module to be built 
-         only one module per c-serpent invocation is allowed.
-                                                                                 
-    -f   the following argument is a filename.
-                                                                                 
-    -v   verbose (prints a list of typedefs that were parsed, for debugging).
-                                                                                 
-    -D   disable including declarations for the functions to be wrapped in the 
-         generated wrapper file this might be used to facilitate amalgamation 
-         builds, for example.
-                                                                                                                                                             
-    -x   if you have some extra handwritten wrappers, you can use '-x whatever'  
-         to include the function 'whatever' (calling 'wrap_whatever') in the     
-         generated module. You'll need to prepend the necessary code to the file 
-         that c-serpent generates.
-                                                                                 
-    -p   the following argument specifies the preprocessor to use for future 
-         files, if different from the default 'cc -E'. Use quotes if you need
-         to include spaces in the preprocessor command.
-                                                                                 
-    -P   disable preprocessing of the next file encountered. This flag only lasts 
-         until the next file change (i.e. -f).
-                                                                                 
-    -i   the following argument is a filename, to be inlcuded before the next  
-         file processed (for use with -P).
-                                                                                 
-    -I   the following argument is a directory path, to be searched for any  
-         future -i flags.
-                                                                                 
-    -e   for functions that follow: if they return a string (const char *), the  
-         string is to be interpreted as an error message (if not null) and a python
-         exception should be thrown.
-                                                                                 
-         this flag only lasts until the next file change (i.e. -f) 
-                                                                                 
-    -e,n,chkfn   for functions that follow: after calling, another function called
-         chkfn should be called.  chkfn should have the signature  
-         'const char * checkfn (?)' where ? is the type of the n-th argument to the
-         function (0 means the function's return value). if the chkfn call returns
-         a non-null string, that string is assumed to be an error message and a  
-         python exception is generated. 
-                                                                                 
-         this flag only lasts until the next file change (i.e. -f) 
-                                                                             
-Environment variables: 
-                                                                             
-    CSERPENT_PP  
-         This variable acts like the -p flag (but the -p flag overrides it) 
+Flags:   
+                                                                               
+-h   print help message and exit    
+  
+-m   the following argument is the name of the module to be built   
+     only one module per c-serpent invocation is allowed.  
+                                                                               
+-f   the following argument is a filename.  
+                                                                               
+-v   verbose (prints a list of typedefs that were parsed, for debugging).  
+                                                                               
+-D   disable including declarations for the functions to be wrapped in the   
+     generated wrapper file this might be used to facilitate amalgamation   
+     builds, for example.  
+                                                                                                                                                           
+-x   if you have some extra handwritten wrappers, you can use '-x whatever'    
+     to include the function 'whatever' (calling 'wrap_whatever') in the       
+     generated module. You'll need to prepend the necessary code to the file   
+     that c-serpent generates.  
+                                                                               
+-p   the following argument specifies the preprocessor to use for future   
+     files, if different from the default 'cc -E'. Use quotes if you need  
+     to include spaces in the preprocessor command.  
+                                                                               
+-P   disable preprocessing of the next file encountered. This flag only lasts   
+     until the next file change (i.e. -f).  
+                                                                               
+-i   the following argument is a filename, to be inlcuded before the next    
+     file processed (for use with -P).  
+                                                                               
+-I   the following argument is a directory path, to be searched for any    
+     future -i flags.  
+                                                                               
+-g   functions that follow are "generic". This is explained fully below.      
+                                                                               
+     this flag only lasts until the next file change (i.e. -f)   
+                                                                               
+-e   for functions that follow: if they return a string (const char *), the    
+     string is to be interpreted as an error message (if not null) and a python  
+     exception should be thrown.  
+                                                                               
+     this flag only lasts until the next file change (i.e. -f)   
+                                                                               
+-e,n,chkfn   for functions that follow: after calling, another function called  
+     chkfn should be called.  chkfn should have the signature    
+     'const char * checkfn (?)' where ? is the type of the n-th argument to the  
+     function (0 means the function's return value). if the chkfn call returns  
+     a non-null string, that string is assumed to be an error message and a    
+     python exception is generated.   
+                                                                               
+     this flag only lasts until the next file change (i.e. -f)   
+                                                                               
+Environment variables:   
+                                                                               
+CSERPENT_PP    
+     This variable acts like the -p flag (but the -p flag overrides it)   
+                                                                               
+Generic functions:   
+                                                                               
+     If you have several copies of a function that accept arguments that are   
+     of different data types, then c-serpent may be able to automatically      
+     generate a disapatch function for you, that allows it to be called from   
+     python in a type-generic way. In order to use this feature, your function 
+     must use a function-name suffix to indicate the data type, following this 
+     convention: 
+                                                                               
+       type            suffix 
+       ----            ------ 
+       int8            b 
+       int16           s 
+       int32           i 
+       int64           l 
+        
+       uint8           B 
+       uint16          S 
+       uint32          I 
+       uint64          L 
+        
+       float           f 
+       double          d 
+        
+       complex float   F 
+       complex double  D 
+                                                                               
+     You do not need to supply all of these variants; c-serpent will support   
+     whichever variants it finds. 
+                                                                               
+     Example: consider: $ ./c-serpent -m mymodule -f whatever.c -g mean        
+     If whatever.c contains the following functions, then python code will be  
+     able to call `mymodule.mean(N, arr)` where arr is a float or double array 
+                                                                               
+       double meanf(int N, float *arr);                                        
+       double meand(int N, double *arr);                                       
+                                                                               
+     C-serpent will try to figure out which arguments change according to the  
+     convention and which do not. Return values may also change.               
+                                                                               
+     Lastly, the type-specific versions of the function do still get wrapped.
