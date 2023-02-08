@@ -774,6 +774,7 @@ int emit_py_buildvalue_fmt_char(Type t)
 	else if (t.category == T_INT) printf("I");
 	else if (t.category == T_LONG) printf("k");
 	else if (t.category == T_LLONG) printf("K");
+	else if (t.category == T_BOOL) printf("p");
 	else return 0;
 	return 1;
 }
@@ -831,6 +832,9 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 			else if (is_array(arg.type))
 				printf("    PyArrayObject *%s = NULL;\n", arg.name);
+
+			else if (arg.type.category == T_BOOL) 
+				printf("    int %s = 0;\n", arg.name);
 
 			else {
 				char buf[200] = {0};
