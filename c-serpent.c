@@ -963,7 +963,12 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 		char buf[200] = {0};
 		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
-		printf("    %s rtn = 0;\n", buf);
+		// python requires us to handle bools as ints
+		if (rtntype.category == T_BOOL) 
+			printf("    int rtn = 0;\n");
+		else
+			printf("    %s rtn = 0;\n", buf);
+
 		printf("    Py_BEGIN_ALLOW_THREADS;\n");
 		printf("    rtn = ");
 		emit_call(fn, flags, n_fnargs, fnargs);
