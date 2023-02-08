@@ -137,7 +137,14 @@ Flags:
     -g   functions that follow are "generic". This is explained fully below.      
                                                                                    
          this flag only lasts until the next file change (i.e. -f)   
+                                                                                    
+    -G   By default, when processing generic functions, c-serpent will remove a  
+         trailing underscore from the names of the generated dispatcher function 
+         (e.g. for functions sum_f and sum_d, the arguments -g -G sum_ would result
+         in the dispatcher function simply being called sum). This flag disables 
+         that functionality, causing trailing underscores to be kept.            
                                                                                    
+         this flag only lasts until the next file change (i.e. -f)                                                                                
     -e   for functions that follow: if they return a string (const char *), the    
          string is to be interpreted as an error message (if not null) and a python  
          exception should be thrown.  
