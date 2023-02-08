@@ -101,6 +101,7 @@ typedef struct
 	const char * preprocessor;
 	int disable_pp;
 	int generic;
+	int generic_keep_trailing_underscore;
 	const char *dirs[MAX_DIRS];
 	int ndirs;
 
@@ -362,6 +363,13 @@ Symbol *get_symbol(char *name)
 	return 0;
 }
 
+Symbol *get_symbol_or_die(char *name)
+{
+	Symbol *s = get_symbol(name);
+	if(!s) die(0, "Unknown type: %s", name);
+	return s;
+}
+
 void clear_symbols(void)
 {
 	nsym = 0;
@@ -591,15 +599,20 @@ int compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, 
 	==========================================================
 */
 
-void emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[])
+void emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
 {
 	if(!flags.modulename) return;
 
 	printf("static PyMethodDef module_functions[] = { \n");
 
 	for (int i = 0; i < n_fnames; i++) {
+		char name[500] = {0};
+		int len = snprintf(name, sizeof(name), "%s", fnames[i]);
+		assert(sizeof(name)-1 > len);
+		if(fname_needs_strip_underscore[i]) name[len-1] = 0;
+
 		printf("{\"%s\", (PyCFunction) wrap_%s, METH_VARARGS|METH_KEYWORDS, \"\"},\n", 
-			fnames[i], fnames[i]);
+			name, fnames[i]);
 	}
 
 	printf(
@@ -996,7 +1009,6 @@ void emit_dispatch_wrapper (
 	VariantSuffix suffixes[],
 	Symbol fnargs[static MAX_FN_ARGS] ) 
 {
-
 	// emit a very general wrapper that just dispatches based on the type of the first argument that matches the suffix in all implementations 
 	
 	int idx_first_covariant_arg = -1;
@@ -1753,6 +1765,14 @@ void usage(void)
 	"                                                                               \n"
 	"     this flag only lasts until the next file change (i.e. -f)   \n"
 	"                                                                               \n"
+	"-G   By default, when processing generic functions, c-serpent will remove a  \n"
+        "     trailing underscore from the names of the generated dispatcher function \n"
+	"     (e.g. for functions sum_f and sum_d, the arguments -g -G sum_ would result\n"
+	"     in the dispatcher function simply being called sum). This flag disables \n"
+	"     that functionality, causing trailing underscores to be kept.            \n"
+	"                                                                               \n"
+	"     this flag only lasts until the next file change (i.e. -f)   \n"
+	"                                                                               \n"
 	"-e   for functions that follow: if they return a string (const char *), the    \n"
 	"     string is to be interpreted as an error message (if not null) and a python  \n"
 	"     exception should be thrown.  \n"
@@ -1845,6 +1865,7 @@ main (int argc, char *argv[])
 		args.preprocessor = getenv("CSERPENT_PP");
 
 	const char *fnames[200] = {0};
+	_Bool fname_needs_remove_underscore[200] = {0};
 	int n_fnames = 0;
 
 	int ntok = 0;
@@ -1863,6 +1884,12 @@ main (int argc, char *argv[])
 
 		if (!strcmp(*argv, "-g")) {
 			args.generic = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-G")) {
+			args.generic_keep_trailing_underscore = 1;
 			argv++;
 			continue;
 		}
@@ -1960,6 +1987,7 @@ main (int argc, char *argv[])
 				});
 				args.disable_pp = 0;
 				args.generic = 0;
+				args.generic_keep_trailing_underscore = 0;
 				memset(&args.manual_include, 0, sizeof(args.manual_include));
 				argv++;
 			} else {
@@ -2014,6 +2042,9 @@ main (int argc, char *argv[])
 
 		if(args.generic) {
 
+			if ((*argv)[strlen(*argv)-1] == '_'  &&  !args.generic_keep_trailing_underscore) 
+				fname_needs_remove_underscore[n_fnames-1] = 1;
+
 			int n_variants_found = 0;
 			VariantSuffix variant_suffixes[] = {
 
@@ -2023,15 +2054,15 @@ main (int argc, char *argv[])
 					the first version that appears.
 				*/
 
-				{get_symbol("int64_t")->type, 'l'},
-				{get_symbol("int32_t")->type, 'i'},
-				{get_symbol("int16_t")->type, 's'},
-				{get_symbol("int8_t")->type,  'b'},
+				{get_symbol_or_die("int64_t")->type, 'l'},
+				{get_symbol_or_die("int32_t")->type, 'i'},
+				{get_symbol_or_die("int16_t")->type, 's'},
+				{get_symbol_or_die("int8_t")->type,  'b'},
 
-				{get_symbol("uint64_t")->type, 'L'},
-				{get_symbol("uint32_t")->type, 'I'},
-				{get_symbol("uint16_t")->type, 'S'},
-				{get_symbol("uint8_t")->type,  'B'},
+				{get_symbol_or_die("uint64_t")->type, 'L'},
+				{get_symbol_or_die("uint32_t")->type, 'I'},
+				{get_symbol_or_die("uint16_t")->type, 'S'},
+				{get_symbol_or_die("uint8_t")->type,  'B'},
 
 				{(Type){.category=T_DOUBLE}, 'd'},
 				{(Type){.category=T_FLOAT},  'f'},
@@ -2069,13 +2100,14 @@ main (int argc, char *argv[])
 			emit_dispatch_wrapper(p, *argv, n_variants_found, arg_match_count, COUNT_ARRAY(variant_suffixes), variant_suffixes, argsyms);
 
 
-		} else if(!parse_file(p, *argv, argsyms)) {
+		} else {
 
-			die(0, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
+			if(!parse_file(p, *argv, argsyms)) 
+				die(0, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
 		}
 
 		argv++;
 	}
 
-	emit_module(args, n_fnames, fnames);
+	emit_module(args, n_fnames, fnames, fname_needs_remove_underscore);
 }
