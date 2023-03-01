@@ -919,14 +919,14 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 				printf("            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
 			        printf("            return 0; \n");
 				printf("        } \n");
-				printf("        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
-				printf("    }\n");
 
 				// emit array contiguity check
-				printf("    if(!PyArray_ISCARRAY(%s)) {\n"
-				       "        PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n"
-			               "        return 0;\n"
-				       "    }\n", arg.name, arg.name);
+				printf("        if(!PyArray_ISCARRAY((PyArrayObject*)%s_obj)) {\n", arg.name);
+				printf("            PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n", arg.name);
+			        printf("            return 0;\n");
+				printf("        }\n");
+				printf("        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
+				printf("    }\n");
 			}
 		}
 
