@@ -23,7 +23,8 @@ to this are `char*` arguments, which are assumed to be strings
 (use `signed char*` for int8), and `void*` which are converted to and from
 Python integers. `char*` and `void*` are also supported as return types, but
 other pointer types are not (so define your output arrays in Python, and 
-populate them with C code). 
+populate them with C code). Non-void pointer arguments also accept `None`, 
+which results in a null pointer being passed to the C function.
 
 For example, consider this C function:
 
@@ -34,40 +35,9 @@ For example, consider this C function:
         return sum/N;
     }
 
-The resulting wrapper will accept a Python integer for `N`, and a
-numpy array with `dtype=numpy.int32` for `array`. An exception will
-be raised if the types don't match. The emitted code for this example:
-
-    double  mean_i32 (int  N, int * array);
-    PyObject * wrap_mean_i32 (PyObject *self, PyObject *args, PyObject *kwds)
-    {
-        (void) self;
-        static char *kwlist[] = {
-            "N",
-            "array",0};
-        int  N = {0};
-        PyArrayObject *array = NULL;
-    
-        if(!PyArg_ParseTupleAndKeywords(args, kwds, "iO!", kwlist,
-            &N,
-            &PyArray_Type, &array)) return 0;
-    
-        if(PyArray_TYPE(array) != C2NPY(int )) {
-            PyErr_SetString(PyExc_ValueError, "Invalid array data type for argument 'array' (expected int )");
-            return 0;
-        }
-        if(!PyArray_ISCARRAY(array)) {
-            PyErr_SetString(PyExc_ValueError, "Argument 'array' is not C-contiguous");
-            return 0;
-        }
-    
-        double  rtn = 0;
-        Py_BEGIN_ALLOW_THREADS;
-        rtn = mean_i32 (N, PyArray_DATA(array));
-        Py_END_ALLOW_THREADS;
-        return Py_BuildValue("d", rtn);
-    }
-
+The resulting wrapper will accept a Python integer for `N`, and either `None` 
+or a numpy array with `dtype=numpy.int32` for `array`. An exception will
+be raised if the types don't match. 
 
 Compiling
 ---------
