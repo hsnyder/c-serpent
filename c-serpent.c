@@ -766,7 +766,7 @@ void emit_call(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[]
 	{
 		char *sep  =  i ? ", " : "";
 		if (is_array(fnargs[i].type))
-			printf("%sPyArray_DATA(%s)", sep, fnargs[i].name);
+			printf("%s%s_data", sep, fnargs[i].name);
 		else 
 			printf("%s%s", sep, fnargs[i].name);
 	}
@@ -835,19 +835,23 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 		for(int i = 0; i < n_fnargs; i++) {
 			Symbol arg = fnargs[i];
 
-			if (is_string(arg.type)) 
+			if (is_string(arg.type)) {
 				printf("    const char * %s = 0;\n", arg.name);
+			}
 
 			else if (is_voidptr(arg.type)) {
 				printf("    unsigned long long %s_ull = 0;\n", arg.name);
 				printf("    void * %s = 0;\n", arg.name);
 			}
 
-			else if (is_array(arg.type))
-				printf("    PyArrayObject *%s = NULL;\n", arg.name);
+			else if (is_array(arg.type)) {
+				printf("    PyObject *%s_obj = NULL;\n", arg.name);
+				printf("    void *%s_data    = NULL;\n", arg.name);
+			}
 
-			else if (arg.type.category == T_BOOL) 
+			else if (arg.type.category == T_BOOL) {
 				printf("    int %s = 0;\n", arg.name);
+			}
 
 			else {
 				char buf[200] = {0};
@@ -864,7 +868,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 			if      (is_string(arg.type))  printf("s");
 			else if (is_voidptr(arg.type)) printf("K");
-			else if (is_array(arg.type))   printf("O!");
+			else if (is_array(arg.type))   printf("O");
 			else {
 				Type t = arg.type;
 				if (!emit_py_buildvalue_fmt_char(t)) {
@@ -887,7 +891,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 			if      (is_string(arg.type))  printf("&%s", arg.name);
 			else if (is_voidptr(arg.type)) printf("&%s_ull", arg.name);
-			else if (is_array(arg.type))   printf("&PyArray_Type, &%s", arg.name);
+			else if (is_array(arg.type))   printf("&%s_obj", arg.name);
 			else  printf("&%s", arg.name);
 
 		}
@@ -906,10 +910,17 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
 
 				// emit array type check
-				printf("    if(PyArray_TYPE(%s) != C2NPY(%s)) {\n"
-				       "        PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n"
-			               "        return 0;\n"
-				       "    }\n", arg.name, buf, arg.name, buf);
+				printf("    if (%s_obj != Py_None) {\n", arg.name);
+				printf("        if (!PyArray_Check(%s_obj)) {\n ", arg.name);
+				printf("            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
+				printf("            return 0;\n");
+				printf("        }\n");
+				printf("        if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
+				printf("            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
+			        printf("            return 0; \n");
+				printf("        } \n");
+				printf("        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
+				printf("    }\n");
 
 				// emit array contiguity check
 				printf("    if(!PyArray_ISCARRAY(%s)) {\n"
