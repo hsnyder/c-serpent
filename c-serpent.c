@@ -910,11 +910,11 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
 
 				// emit array type check
-				printf("    if (%s_obj != Py_None) {\n", arg.name);
-				printf("        if (!PyArray_Check(%s_obj)) {\n ", arg.name);
+				printf("    if (%s_obj != Py_None) { \n", arg.name);
+				printf("        if (!PyArray_Check(%s_obj)) { \n", arg.name);
 				printf("            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
-				printf("            return 0;\n");
-				printf("        }\n");
+				printf("            return 0; \n");
+				printf("        } \n");
 				printf("        if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
 				printf("            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
 			        printf("            return 0; \n");
