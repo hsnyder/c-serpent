@@ -1766,6 +1766,13 @@ void usage(void)
 	"-P   disable preprocessing of the next file encountered. This flag only lasts   \n"
 	"     until the next file change (i.e. -f).  \n"
 	"                                                                               \n"
+	"-t   the following argument is a type name, which should be treated as being \n"
+	"     equivalent to void. This is useful for making c-serpent handle pointers to \n"
+	"     unsupported types (e.g. structs) as void pointers (thereby converting them \n"
+	"     to and from python integers). \n"
+	"                                                                               \n"
+	"     this flag only lasts until the next file change (i.e. -f)   \n"
+	"                                                                               \n"
 	"-i   the following argument is a filename, to be inlcuded before the next    \n"
 	"     file processed (for use with -P).  \n"
 	"                                                                               \n"
@@ -1973,6 +1980,21 @@ main (int argc, char *argv[])
 				argv++;
 			} else {
 				die(0, "-p flag must be followed by a program (to serve as preprocessor)");
+			}
+			continue;
+		}
+
+		if (!strcmp(*argv, "-t")) { 
+			argv++;
+			if(*argv && **argv != '-') {
+				Symbol newtype = {
+					.name = *argv,
+					.type = {.category = T_VOID},
+				};
+				(void)add_symbol(newtype);	
+				argv++;
+			} else {
+				die(0, "-t flag must be followed by a type name");
 			}
 			continue;
 		}

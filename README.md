@@ -98,9 +98,16 @@ Flags:
     -P   disable preprocessing of the next file encountered. This flag only lasts   
          until the next file change (i.e. -f).  
                                                                                    
+    -t   the following argument is a type name, which should be treated as 
+         being equivalent to void. This is useful for making c-serpent handle
+         pointers to unsupported types (e.g. structs) as void pointers (thereby
+         converting them to and from python integers). 
+
+         this flag only lasts until the next file change (i.e. -f)   
+                                                                                   
     -i   the following argument is a filename, to be inlcuded before the next    
          file processed (for use with -P).  
-                                                                                   
+
     -I   the following argument is a directory path, to be searched for any    
          future -i flags.  
                                                                                    
