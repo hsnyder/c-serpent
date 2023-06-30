@@ -836,7 +836,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 			Symbol arg = fnargs[i];
 
 			if (is_string(arg.type)) {
-				printf("    const char * %s = 0;\n", arg.name);
+				printf("    char * %s = 0;\n", arg.name);
 			}
 
 			else if (is_voidptr(arg.type)) {
