@@ -866,7 +866,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 			// building the format string for ParseTupleAndKeywords
 			Symbol arg = fnargs[i];
 
-			if      (is_string(arg.type))  printf("s");
+			if      (is_string(arg.type))  printf("z");
 			else if (is_voidptr(arg.type)) printf("K");
 			else if (is_array(arg.type))   printf("O");
 			else {
