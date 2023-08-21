@@ -317,7 +317,7 @@ static int stb__clex_eof(stb_lexer *lexer)
 
 static int stb__clex_iswhite(int x)
 {
-   return x == ' ' || x == '\t' || x == '\r' || x == '\n' || x == '\f';
+   return x == ' ' || x == '\t' || x == '\r' || x == '\n' || x == '\f' || x == '\v';
 }
 
 static const char *stb__strchr(const char *str, int ch)
@@ -454,6 +454,7 @@ static int stb__clex_parse_char(char *p, char **q)
          case '"': return '"';
          case 't': return '\t';
          case 'f': return '\f';
+         case 'v': return '\v';
          case 'n': return '\n';
          case 'r': return '\r';
          case '0': return '\0'; // @TODO ocatal constants
