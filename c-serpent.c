@@ -1272,7 +1272,7 @@ supported_type(ParseCtx *p, Type *t)
 
 		if (eat_identifier(p, "const"))  { modify_type_const(p,t); return 1; }
 		if (eat_identifier(p, "restrict"))  { modify_type_restrict(p,t); return 1; }
-		if (eat_identifier(p, "volatile"))  { modify_type_restrict(p,t); return 1; }
+		if (eat_identifier(p, "volatile"))  { modify_type_volatile(p,t); return 1; }
 
 		return 0;
 	}
