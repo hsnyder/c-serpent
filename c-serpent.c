@@ -1859,14 +1859,10 @@ void usage(void)
 	
 }
 
+
 int 
-main (int argc, char *argv[])
+cserpent_main (char *argv[])
 {
-	(void)argc;
-	argv++;
-
-	if(!*argv) usage();
-
 	/*
 		Allocate buffers
 	*/
@@ -2143,4 +2139,14 @@ main (int argc, char *argv[])
 	}
 
 	emit_module(args, n_fnames, fnames, fname_needs_remove_underscore);
+	return 0;
+}
+
+int 
+main (int argc, char *argv[])
+{
+	(void)argc;
+	argv++;
+	if(!*argv) usage();
+	return cserpent_main(argv);
 }
