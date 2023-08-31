@@ -115,11 +115,16 @@ typedef struct
 
 } CSerpentArgs;
 
+typedef struct {
+	Symbol symbols[10000];
+	int nsym;
+} SymbolTable;
 
 typedef struct {
 	Token     *tokens;   
 	Token     *tokens_end;
 	Token     *tokens_first;   
+	SymbolTable *symtab;
 	CSerpentArgs args;
 } ParseCtx;
 
@@ -361,40 +366,35 @@ overflow:
 }
 
 
-// TODO/NOTE not thread safe
-// NOTE this is only a global symbol table
-Symbol symtab[10000] = {0};
-int nsym = 0;
-
 internal Symbol *
-add_symbol(Symbol s)
+add_symbol(SymbolTable *symtab, Symbol s)
 {
-	if(nsym == COUNT_ARRAY(symtab)) die(0, "global symbol table full");
+	if(symtab->nsym == COUNT_ARRAY(symtab->symbols)) die(0, "symbol table full");
 	s.name = intern(s.name, 0);
-	symtab[nsym] = s;
-	return &symtab[nsym++];
+	symtab->symbols[symtab->nsym] = s;
+	return &symtab->symbols[symtab->nsym++];
 }
 
 internal Symbol *
-get_symbol(char *name)
+get_symbol(SymbolTable *symtab, char *name)
 {
-	for(int i = 0; i < nsym; i++)
-		if(!strcmp(name,symtab[i].name)) return &symtab[i];
+	for(int i = 0; i < symtab->nsym; i++)
+		if(!strcmp(name,symtab->symbols[i].name)) return &symtab->symbols[i];
 	return 0;
 }
 
 internal Symbol *
-get_symbol_or_die(char *name)
+get_symbol_or_die(SymbolTable *symtab, char *name)
 {
-	Symbol *s = get_symbol(name);
+	Symbol *s = get_symbol(symtab, name);
 	if(!s) die(0, "Unknown type: %s", name);
 	return s;
 }
 
 internal void 
-clear_symbols(void)
+clear_symbols(SymbolTable *symtab)
 {
-	nsym = 0;
+	symtab->nsym = 0;
 }
 
 internal int 
@@ -1237,7 +1237,7 @@ typedef_name(ParseCtx *p, Type *t)
 	if(p->tokens[0].toktype == CLEX_id) {
 
 		Symbol *s = 0;
-		if ((s = get_symbol(p->tokens[0].string))) {
+		if ((s = get_symbol(p->symtab, p->tokens[0].string))) {
 			if(t) *t = s->type;
 			p->tokens++;
 			return 1;
@@ -1311,7 +1311,7 @@ supported_typedef(ParseCtx *p, Symbol *s)
 }
 
 internal void 
-populate_symbols(ParseCtx p)
+populate_symbols(SymbolTable *symtab, ParseCtx p)
 {
 	while(p.tokens != p.tokens_end) {
 
@@ -1323,7 +1323,7 @@ populate_symbols(ParseCtx p)
 
 		Symbol s = {0};
 		if (supported_typedef(&p, &s)) {
-			add_symbol(s);
+			add_symbol(symtab, s);
 
 			if(p.args.verbose) {
 				char buf[200] = {0};
@@ -1544,6 +1544,7 @@ enum delim_stack_action {
 
 internal long 
 delim_stack(enum delim_stack_action action, Token value, char *start, char* loc) {
+	// TODO not thread safe
 	global short stack[200] = {0};
 	global char *locations[200] = {0};
 	global long pos = 0;
@@ -1945,6 +1946,8 @@ cserpent_main (char *argv[])
 
 	int emitted_preamble = 0;
 
+	SymbolTable symtab = {0};
+
 	CSerpentArgs args = {.preprocessor = "cc -E"};
 	if (getenv("CSERPENT_PP")) 
 		args.preprocessor = getenv("CSERPENT_PP");
@@ -2058,7 +2061,7 @@ cserpent_main (char *argv[])
 					.name = *argv,
 					.type = {.category = T_VOID},
 				};
-				(void)add_symbol(newtype);	
+				(void)add_symbol(&symtab, newtype);	
 				argv++;
 			} else {
 				die(0, "-t flag must be followed by a type name");
@@ -2078,13 +2081,16 @@ cserpent_main (char *argv[])
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
 				ntok = lex_file(args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
-				clear_symbols();
-				populate_symbols((ParseCtx) {
-					.tokens_first  =  tokens,
-					.tokens        =  tokens,
-					.tokens_end    =  tokens+ntok,
-					.args = args,
-				});
+				clear_symbols(&symtab);
+				populate_symbols(
+					&symtab, 
+					(ParseCtx) {
+						.tokens_first  =  tokens,
+						.tokens        =  tokens,
+						.tokens_end    =  tokens+ntok,
+						.symtab        =  &symtab,
+						.args          =  args, }
+					);
 				args.disable_pp = 0;
 				args.generic = 0;
 				args.generic_keep_trailing_underscore = 0;
@@ -2135,7 +2141,8 @@ cserpent_main (char *argv[])
 			.tokens_first  =  tokens,
 			.tokens        =  tokens,
 			.tokens_end    =  tokens+ntok,
-			.args = args,
+			.args          =  args,
+			.symtab        =  &symtab,
 		};
 
 		Symbol argsyms[MAX_FN_ARGS] = {0};
@@ -2154,15 +2161,15 @@ cserpent_main (char *argv[])
 					the first version that appears.
 				*/
 
-				{get_symbol_or_die("int64_t")->type, 'l'},
-				{get_symbol_or_die("int32_t")->type, 'i'},
-				{get_symbol_or_die("int16_t")->type, 's'},
-				{get_symbol_or_die("int8_t")->type,  'b'},
+				{get_symbol_or_die(&symtab, "int64_t")->type, 'l'},
+				{get_symbol_or_die(&symtab, "int32_t")->type, 'i'},
+				{get_symbol_or_die(&symtab, "int16_t")->type, 's'},
+				{get_symbol_or_die(&symtab, "int8_t")->type,  'b'},
 
-				{get_symbol_or_die("uint64_t")->type, 'L'},
-				{get_symbol_or_die("uint32_t")->type, 'I'},
-				{get_symbol_or_die("uint16_t")->type, 'S'},
-				{get_symbol_or_die("uint8_t")->type,  'B'},
+				{get_symbol_or_die(&symtab, "uint64_t")->type, 'L'},
+				{get_symbol_or_die(&symtab, "uint32_t")->type, 'I'},
+				{get_symbol_or_die(&symtab, "uint16_t")->type, 'S'},
+				{get_symbol_or_die(&symtab, "uint8_t")->type,  'B'},
 
 				{(Type){.category=T_DOUBLE}, 'd'},
 				{(Type){.category=T_FLOAT},  'f'},
