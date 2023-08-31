@@ -262,11 +262,16 @@ die (ParseCtx *p, const char * fmt, ...)
 	exit(EXIT_FAILURE);
 }
 
-struct ht {
-	char **ht;
-	int32_t len;
-	int32_t exp;
+enum { 
+	MAX_STRINGS_EXP=15, 
+	MAX_STRING_HEAP=(1<<22),
 };
+
+typedef struct {
+	int num_strings, heap_size;
+	char heap[MAX_STRING_HEAP];
+	char *table[1<<MAX_STRINGS_EXP];
+} StringTable;
 
 static uint64_t 
 hash (char *s, int32_t len)
@@ -288,43 +293,31 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 }
 
 static char *
-strdup_len_or_die(char * str, int len)
-{
-	if(len == 0) len = strlen(str);
-	char *x = malloc(len+1);
-	if(!x) die(0, "strdup_len_or_die: out of memory");
-	memcpy(x,str,len+1);
-	return x;
-}
-
-static char *
 intern(char *key, int keylen)
 {
 	// NOTE/TODO not thread safe (fine in this application) 
-	
-	static char *stringheap[1<<27] = {0};
-	static struct ht stringtable = {
-		.ht = stringheap,
-		.exp = 27,
-	};
-
-	struct ht *t = &stringtable;
+	static StringTable _st = {0};
+	StringTable *st = &_st;
 
 	if (keylen == 0) keylen = strlen(key);
 	uint64_t h = hash(key, keylen+1);
 	for (int32_t i = h;;) {
-		i = ht_lookup(h, t->exp, i);
-		if (!t->ht[i]) {
+		i = ht_lookup(h, MAX_STRINGS_EXP, i);
+		if (!st->table[i]) {
 			// empty, insert here
-			if ((uint32_t)t->len+1 == (uint32_t)1<<t->exp) {
-				die(0, "out of memory in intern");
-			}
-			t->len++;
-			t->ht[i] = strdup_len_or_die(key, keylen);
-			return t->ht[i];
-		} else if (!strcmp(t->ht[i], key)) {
+			if (st->num_strings+1 == COUNT_ARRAY(st->table)/2)
+				die(0, "intern: string table full");
+			if (st->heap_size + keylen + 1 >= MAX_STRING_HEAP)
+				die(0, "intern: string heap full");
+			st->num_strings++;
+			st->table[i] = st->heap+st->heap_size;
+			memcpy(st->table[i], key, keylen);
+			st->heap_size += keylen;
+			st->heap[st->heap_size++] = 0;
+			return st->table[i];
+		} else if (!strcmp(st->table[i], key)) {
 			// found, return canonical instance
-			return t->ht[i];
+			return st->table[i];
 		}
 	}
 }
