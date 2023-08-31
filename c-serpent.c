@@ -153,7 +153,10 @@ typedef struct {
 #  endif
 #endif
 
-static int 
+#define internal static
+#define global static
+
+internal int 
 repr_type(int bufsz, char buf[], Type type) 
 {
 
@@ -177,7 +180,7 @@ repr_type(int bufsz, char buf[], Type type)
 }
 
 
-static int 
+internal int 
 repr_symbol(int bufsz, char buf[], Symbol s) 
 {
 
@@ -189,7 +192,7 @@ repr_symbol(int bufsz, char buf[], Symbol s)
 	return x + repr_type(bufsz, buf, s.type);
 }
 
-static void 
+internal void 
 repr_token(int bufsz, char buf[], Token t)
 {
 	switch (t.toktype) {
@@ -231,7 +234,7 @@ repr_token(int bufsz, char buf[], Token t)
 	}
 }
 
-static void 
+internal void 
 dump_context(FILE *f, ParseCtx *p)
 {
 	long long before = MIN(p->tokens - p->tokens_first, 20); 
@@ -250,7 +253,7 @@ dump_context(FILE *f, ParseCtx *p)
 }
 
 
-static _Noreturn void
+internal _Noreturn void
 die (ParseCtx *p, const char * fmt, ...)
 {
 	va_list va;
@@ -273,7 +276,7 @@ typedef struct {
 	char *table[1<<MAX_STRINGS_EXP];
 } StringTable;
 
-static uint64_t 
+internal uint64_t 
 hash (char *s, int32_t len)
 {
 	uint64_t h = 0x100;
@@ -284,7 +287,7 @@ hash (char *s, int32_t len)
 	return h ^ h>>32;
 }
 
-static int32_t 
+internal int32_t 
 ht_lookup(uint64_t hash, int exp, int32_t idx)
 {
 	uint32_t mask = ((uint32_t)1 << exp) - 1;
@@ -292,11 +295,11 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 	return (idx + step) & mask;
 }
 
-static char *
+internal char *
 intern(char *key, int keylen)
 {
 	// NOTE/TODO not thread safe (fine in this application) 
-	static StringTable _st = {0};
+	global StringTable _st = {0};
 	StringTable *st = &_st;
 
 	if (keylen == 0) keylen = strlen(key);
@@ -322,7 +325,7 @@ intern(char *key, int keylen)
 	}
 }
 
-static int 
+internal int 
 xatoi (const char *x, int *nchars_read)
 {
 	const char * save = x;
@@ -363,7 +366,7 @@ overflow:
 Symbol symtab[10000] = {0};
 int nsym = 0;
 
-static Symbol *
+internal Symbol *
 add_symbol(Symbol s)
 {
 	if(nsym == COUNT_ARRAY(symtab)) die(0, "global symbol table full");
@@ -372,7 +375,7 @@ add_symbol(Symbol s)
 	return &symtab[nsym++];
 }
 
-static Symbol *
+internal Symbol *
 get_symbol(char *name)
 {
 	for(int i = 0; i < nsym; i++)
@@ -380,7 +383,7 @@ get_symbol(char *name)
 	return 0;
 }
 
-static Symbol *
+internal Symbol *
 get_symbol_or_die(char *name)
 {
 	Symbol *s = get_symbol(name);
@@ -388,13 +391,13 @@ get_symbol_or_die(char *name)
 	return s;
 }
 
-static void 
+internal void 
 clear_symbols(void)
 {
 	nsym = 0;
 }
 
-static int 
+internal int 
 modify_type_pointer(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -404,7 +407,7 @@ modify_type_pointer(ParseCtx *p, Type *type)
 	return 1;
 }
 
-static void 
+internal void 
 modify_type_const(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -413,7 +416,7 @@ modify_type_const(ParseCtx *p, Type *type)
 	else type->is_const = 1;
 }
 
-static void 
+internal void 
 modify_type_restrict(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -422,7 +425,7 @@ modify_type_restrict(ParseCtx *p, Type *type)
 	else type->is_restrict = 1;
 }
 
-static void 
+internal void 
 modify_type_volatile(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -431,7 +434,7 @@ modify_type_volatile(ParseCtx *p, Type *type)
 	else type->is_volatile = 1;
 }
 
-static void 
+internal void 
 modify_type_struct(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -440,7 +443,7 @@ modify_type_struct(ParseCtx *p, Type *type)
 	else die(p, "'struct' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_union(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -449,7 +452,7 @@ modify_type_union(ParseCtx *p, Type *type)
 	else die(p, "'union' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_void(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -464,7 +467,7 @@ modify_type_void(ParseCtx *p, Type *type)
 	else die(p, "'void' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_char(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -475,7 +478,7 @@ modify_type_char(ParseCtx *p, Type *type)
 	else die(p, "'char' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_short(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -486,7 +489,7 @@ modify_type_short(ParseCtx *p, Type *type)
 	else die(p, "'short' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_int(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -501,7 +504,7 @@ modify_type_int(ParseCtx *p, Type *type)
 	else die(p, "'int' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_long(ParseCtx *p, Type *type) 
 {
 	assert(type);
@@ -514,7 +517,7 @@ modify_type_long(ParseCtx *p, Type *type)
 	else die(p, "'long' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_float(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -526,7 +529,7 @@ modify_type_float(ParseCtx *p, Type *type)
 	else die(p, "'float' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_double(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -539,7 +542,7 @@ modify_type_double(ParseCtx *p, Type *type)
 	else die(p, "'double' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_signed(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -548,7 +551,7 @@ modify_type_signed(ParseCtx *p, Type *type)
 	type->explicit_signed = 1;
 }
 
-static void 
+internal void 
 modify_type_unsigned(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -557,7 +560,7 @@ modify_type_unsigned(ParseCtx *p, Type *type)
 	type->is_unsigned = 1;
 }
 
-static void 
+internal void 
 modify_type_bool(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -569,7 +572,7 @@ modify_type_bool(ParseCtx *p, Type *type)
 	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-static void 
+internal void 
 modify_type_complex(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -579,7 +582,7 @@ modify_type_complex(ParseCtx *p, Type *type)
 	// TODO check against struct/union?
 }
 
-static void 
+internal void 
 modify_type_imaginary(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -589,7 +592,7 @@ modify_type_imaginary(ParseCtx *p, Type *type)
 	// TODO check against struct/union?
 }
 
-static int 
+internal int 
 compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int compare_volatile, int compare_restrict) 
 {
 	if(a.category != b.category) return 0;
@@ -637,7 +640,7 @@ compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int 
 	==========================================================
 */
 
-static void 
+internal void 
 emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
 {
 	if(!flags.modulename) return;
@@ -692,11 +695,11 @@ emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_
 	"} \n", flags.modulename, flags.modulename);
 }
 
-static void 
+internal void 
 emit_preamble(CSerpentArgs flags)
 {
 	(void) flags;
-	static const char * preamble = 
+	global const char * preamble = 
 	"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
 	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
 	"#include <Python.h> \n"
@@ -720,7 +723,7 @@ emit_preamble(CSerpentArgs flags)
 	printf("%s\n", preamble);
 }
 
-static int 
+internal int 
 is_string(Type t)
 {
 	return t.category == T_CHAR
@@ -729,14 +732,14 @@ is_string(Type t)
 		&& t.is_pointer;
 }
 
-static int 
+internal int 
 is_voidptr(Type t)
 {
 	return t.category == T_VOID
 		&& t.is_pointer;
 }
 
-static int 
+internal int 
 is_plainvoid(Type t)
 {
 	Type zero = {0};
@@ -747,7 +750,7 @@ is_plainvoid(Type t)
 	return 0;
 }
 
-static int 
+internal int 
 is_array(Type t)
 {
 	return !is_string(t) 
@@ -755,7 +758,7 @@ is_array(Type t)
 		&& t.is_pointer;
 }
 
-static Type 
+internal Type 
 basetype(Type t)
 {
 	t.is_pointer = 0;
@@ -768,7 +771,7 @@ basetype(Type t)
 	return t;
 }
 
-static void 
+internal void 
 emit_exceptionhandling(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
 {
 	if(flags.error_handling.active) {
@@ -804,7 +807,7 @@ emit_exceptionhandling(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol 
 	}
 }
 
-static void 
+internal void 
 emit_call(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
 {
 	printf("%s (", fn);
@@ -821,7 +824,7 @@ emit_call(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
 	printf(");\n");
 }
 
-static int 
+internal int 
 emit_py_buildvalue_fmt_char(Type t) 
 {
 	if      (t.category == T_CHAR) printf("b");
@@ -840,7 +843,7 @@ emit_py_buildvalue_fmt_char(Type t)
 	return 1;
 }
 
-static void 
+internal void 
 emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[], Type rtntype)
 {
 	assert(n_fnargs >= 0);
@@ -1060,7 +1063,7 @@ emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[],
 
 }
 
-static void 
+internal void 
 emit_dispatch_wrapper (
 	ParseCtx p,
 	const char *fn, 
@@ -1175,7 +1178,7 @@ emit_dispatch_wrapper (
 */
 
 
-static int 
+internal int 
 eat_identifier(ParseCtx *p, const char *id)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1188,7 +1191,7 @@ eat_identifier(ParseCtx *p, const char *id)
 	return 0;
 }
 
-static int 
+internal int 
 eat_token(ParseCtx *p, long toktype)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1199,7 +1202,7 @@ eat_token(ParseCtx *p, long toktype)
 	return 0;
 }
 
-static int
+internal int
 check_token_is_identifier(Token *t, const char *id, long id_len)
 {
 	if (id_len == 0) 
@@ -1214,7 +1217,7 @@ check_token_is_identifier(Token *t, const char *id, long id_len)
 	return 0;
 }
 
-static int 
+internal int 
 identifier(ParseCtx *p, char** out_id)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1227,7 +1230,7 @@ identifier(ParseCtx *p, char** out_id)
 	return 0;
 }
 
-static int 
+internal int 
 typedef_name(ParseCtx *p, Type *t)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1243,7 +1246,7 @@ typedef_name(ParseCtx *p, Type *t)
 	return 0;
 }
 
-static int 
+internal int 
 supported_type(ParseCtx *p, Type *t)
 {
 	if (p->tokens == p->tokens_end) return 0;
@@ -1276,7 +1279,7 @@ supported_type(ParseCtx *p, Type *t)
 	return 0;	
 }
 
-static int 
+internal int 
 supported_type_list(ParseCtx *p, Type *t)
 {
 	if(!supported_type(p,t)) return 0;
@@ -1284,7 +1287,7 @@ supported_type_list(ParseCtx *p, Type *t)
 	return 1;
 }
 
-static int 
+internal int 
 supported_typedef(ParseCtx *p, Symbol *s)
 {
 	SAVE(p);
@@ -1307,7 +1310,7 @@ supported_typedef(ParseCtx *p, Symbol *s)
 	return 0;
 }
 
-static void 
+internal void 
 populate_symbols(ParseCtx p)
 {
 	while(p.tokens != p.tokens_end) {
@@ -1335,7 +1338,7 @@ populate_symbols(ParseCtx p)
 }
 
 
-static int 
+internal int 
 arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 {
 	SAVE(p);
@@ -1385,7 +1388,7 @@ arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 	return 1;
 }
 
-static int 
+internal int 
 arglist(ParseCtx *p, const char *fn, int max_args, int *num_args, Symbol fnargs[], int fatal)
 {
 	SAVE(p);
@@ -1421,7 +1424,7 @@ arglist(ParseCtx *p, const char *fn, int max_args, int *num_args, Symbol fnargs[
 	return 0;
 }
 
-static void 
+internal void 
 attributes(ParseCtx *p, const char *fn)
 {
 	while(1) {
@@ -1447,7 +1450,7 @@ attributes(ParseCtx *p, const char *fn)
 	}
 }
 
-static void 
+internal void 
 process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 {
 	// on entry, p.tokens is set right on the function name.	
@@ -1483,7 +1486,7 @@ process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 	emit_wrapper (fn, p.args, num_args, argsyms, rtn_t);
 }
 
-static int 
+internal int 
 parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_ARGS])
 {
 	long len = strlen(function_name);
@@ -1512,7 +1515,7 @@ parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_A
 #endif
 
 
-static void 
+internal void 
 print_context(char *start, char *loc)
 {
 	char *first = loc;
@@ -1539,11 +1542,11 @@ enum delim_stack_action {
 	DS_QUERY,
 };
 
-static long 
+internal long 
 delim_stack(enum delim_stack_action action, Token value, char *start, char* loc) {
-	static short stack[200] = {0};
-	static char *locations[200] = {0};
-	static long pos = 0;
+	global short stack[200] = {0};
+	global char *locations[200] = {0};
+	global long pos = 0;
 
 	switch(action) {
 	case DS_PUSH:
@@ -1600,12 +1603,12 @@ mismatch_close:
 	exit(EXIT_FAILURE);
 }
 
-static void delim_push(Token value, char *start, char* loc) { (void)delim_stack(DS_PUSH, value, start, loc); }
-static int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP, value, start, loc); }
-static int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
+internal void delim_push(Token value, char *start, char* loc) { (void)delim_stack(DS_PUSH, value, start, loc); }
+internal int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP, value, start, loc); }
+internal int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
-static int 
+internal int 
 lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
@@ -1778,7 +1781,7 @@ lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long te
 */
 
 
-static void 
+internal void 
 usage(void)
 {
 	const char *message = 
