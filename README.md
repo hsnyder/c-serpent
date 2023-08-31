@@ -44,7 +44,10 @@ Compiling
 
 Just point your C compiler at c-serpent.c. For example on a unix-derivative, 
 
-    $ cc -g c-serpent.c -o c-serpent 
+    $ cc -g c-serpent.c -o cserpent 
+
+If you can define `CSERPENT_DISABLE_ASSERT` to compile out assertions, if
+you wish to.
         
 
 Usage

@@ -7,9 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <assert.h>
-#include <stdint.h>
-#include <ctype.h>
 #include <stdint.h>
 #include <limits.h>
 
@@ -141,6 +138,20 @@ typedef struct {
 #define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define MAX(a,b) ((a)>(b)?(a):(b))
+
+#ifdef CSERPENT_DISABLE_ASSERT
+#  define assert(c)
+#else
+#  if defined(_MSC_VER)
+#    define assert(c) if(!(c)){__debugbreak();}
+#  else
+#    if defined(__GNUC__) || defined(__clang__)
+#      define assert(c) if(!(c)){__builtin_trap();}
+#    else 
+#      define assert(c) if(!(c)){*(volatile int*)0=0;}
+#    endif 
+#  endif
+#endif
 
 static int repr_type(int bufsz, char buf[], Type type) {
 
