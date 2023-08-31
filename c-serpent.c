@@ -133,6 +133,7 @@ typedef struct {
 	==========================================================
 */
 
+#define ssizeof(x) ((int64_t)sizeof(x))
 #define COUNT_ARRAY(x) ((int64_t)(sizeof(x)/sizeof(x[0])))
 
 #define OPTIONAL(x) ((x), 1)
@@ -608,7 +609,7 @@ void emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool f
 	for (int i = 0; i < n_fnames; i++) {
 		char name[500] = {0};
 		int len = snprintf(name, sizeof(name), "%s", fnames[i]);
-		assert(sizeof(name)-1 > len);
+		assert(ssizeof(name)-1 > len);
 		if(fname_needs_strip_underscore[i]) name[len-1] = 0;
 
 		printf("{\"%s\", (PyCFunction) wrap_%s, METH_VARARGS|METH_KEYWORDS, \"\"},\n", 
@@ -799,7 +800,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 	// declaration for function to be wrapped
 	if(!flags.disable_declarations) {
 		char buf[200] = {0};
-		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		printf("%s %s (", buf, fn);
 
@@ -809,7 +810,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 		else for(int i = 0; i < n_fnargs; i++)
 		{
 			memset(buf,0,sizeof(buf));
-			assert(sizeof(buf) > repr_type(sizeof(buf), buf, fnargs[i].type));
+			assert(ssizeof(buf) > repr_type(sizeof(buf), buf, fnargs[i].type));
 
 			char * sep  =  i ? ", " : "";
 			printf("%s%s %s", sep, buf, fnargs[i].name);
@@ -855,7 +856,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 			else {
 				char buf[200] = {0};
-				assert(sizeof(buf) > repr_type(sizeof(buf), buf, arg.type));
+				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, arg.type));
 				printf("    %s %s = {0};\n", buf, arg.name);
 			}
 		}
@@ -874,7 +875,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 				if (!emit_py_buildvalue_fmt_char(t)) {
 
 					char buf[200] = {0};
-					assert(sizeof(buf) > repr_type(sizeof(buf), buf, t));
+					assert(ssizeof(buf) > repr_type(sizeof(buf), buf, t));
 					die(0, "Error wrapping function '%s' in file '%s': "
 					    "argument %i has type '%s', "
 					    "which c-serpent doesn't know how to convert "
@@ -907,7 +908,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 			else if (is_array(arg.type)) {
 				char buf[200] = {0};
-				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
+				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
 
 				// emit array type check
 				printf("    if (%s_obj != Py_None) { \n", arg.name);
@@ -951,7 +952,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 	} else if (is_string(rtntype)) {
 
 		char buf[200] = {0};
-		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		printf("    %s rtn = 0;\n", buf);
 		printf("    Py_BEGIN_ALLOW_THREADS;\n");
@@ -964,7 +965,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 	} else if (is_voidptr(rtntype)) {
 
 		char buf[200] = {0};
-		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		printf("    %s rtn = 0;\n", buf);
 		printf("    Py_BEGIN_ALLOW_THREADS;\n");
@@ -977,7 +978,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 	} else if (is_array(rtntype)) {
 
 		char buf[200] = {0};
-		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		die(0, "Error wrapping function '%s' in file '%s': "
 		       "return type '%s' is not supported by c-serpent",
@@ -985,7 +986,7 @@ void emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnar
 
 	} else {
 		char buf[200] = {0};
-		assert(sizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
+		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
 		// python requires us to handle bools as ints
 		if (rtntype.category == T_BOOL) 
@@ -1069,7 +1070,7 @@ void emit_dispatch_wrapper (
 			if(key_arg.is_pointer) {
 
 				char buf[200] = {0};
-				assert(sizeof(buf) > repr_type(sizeof(buf), buf, basetype(suffixes[i].type)));
+				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, basetype(suffixes[i].type)));
 				// array 
 				printf("    if (PyArray_Check(arglist[%i]) && PyArray_TYPE((PyArrayObject*)arglist[%i]) == C2NPY(%s)) {\n", idx_first_covariant_arg, idx_first_covariant_arg, buf);
 
@@ -1105,7 +1106,7 @@ void emit_dispatch_wrapper (
 				// ..wat?
 				else {
 					char buf[200] = {0};
-					assert(sizeof(buf) > repr_type(sizeof(buf), buf, key_arg));
+					assert(ssizeof(buf) > repr_type(sizeof(buf), buf, key_arg));
 					die(&p, "error generating dispatcher for '%s' unsupported scalar argument type '%s'", fn, buf);
 				}
 				
@@ -1562,7 +1563,7 @@ int lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long lon
 		{
 			char path[4096] = {0};
 			// TODO accomodate windows
-			if(sizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
+			if(ssizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
 				die(0, "internal buffer overflow (path too long)");
 			f = fopen(path, "rb");
 			if(f) break;
@@ -1572,7 +1573,7 @@ int lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long lon
 		if(!f) {
 			char path[4096] = {0};
 			// TODO accomodate windows
-			if(sizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
+			if(ssizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
 				die(0, "internal buffer overflow (path too long)");
 			f = fopen(path, "rb");
 		}
@@ -1604,7 +1605,7 @@ int lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long lon
 
 		// read via popen to preprocessor command
 		char cmd[4096] = {0};
-		if(sizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
+		if(ssizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
 			die(0, "internal buffer overflow");
 		
 		FILE *f = popen(cmd, "r");
