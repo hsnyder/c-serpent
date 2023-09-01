@@ -114,12 +114,18 @@ typedef struct
 	} manual_include;
 
 } CSerpentArgs;
+
+
+
 enum { 
 	MAX_STRINGS_EXP=15, 
 	MAX_STRING_HEAP=(1<<22),
+	MAX_DELIMSTACK=200,
+	MAX_SYMBOLS=10000,
 };
 
 typedef struct {
+
 	// String table
 	int num_strings, heap_size;
 	char heap[MAX_STRING_HEAP];
@@ -127,12 +133,13 @@ typedef struct {
 
 	// Symbol table
 	int nsym;
-	Symbol symbols[10000];
+	Symbol symbols[MAX_SYMBOLS];
 
 	// Delimiter stack
-	short delimstack[200];
-	char *delimstack_locations[200];
+	short delimstack[MAX_DELIMSTACK];
+	char *delimstack_locations[MAX_DELIMSTACK];
 	long  delimstack_pos;
+
 } StorageBuffers;
 
 typedef struct {
