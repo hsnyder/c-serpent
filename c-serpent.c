@@ -128,6 +128,11 @@ typedef struct {
 	// Symbol table
 	int nsym;
 	Symbol symbols[10000];
+
+	// Delimiter stack
+	short delimstack[200];
+	char *delimstack_locations[200];
+	long  delimstack_pos;
 } StorageBuffers;
 
 typedef struct {
@@ -1538,21 +1543,21 @@ enum delim_stack_action {
 };
 
 internal long 
-delim_stack(enum delim_stack_action action, Token value, char *start, char* loc) {
-	// TODO not thread safe
-	global short stack[200] = {0};
-	global char *locations[200] = {0};
-	global long pos = 0;
-
+delim_stack(StorageBuffers *storage, enum delim_stack_action action, Token value, char *start, char* loc) {
 	switch(action) {
 	case DS_PUSH:
-		if(pos == COUNT_ARRAY(stack)) die(0, "congratulations, your file blew the delimiter stack");
-		locations[pos] = loc;
-		stack[pos++] = value.toktype;
+		if(storage->delimstack_pos == COUNT_ARRAY(storage->delimstack)) 
+			die(0, "congratulations, your file blew the delimiter stack");
+
+		storage->delimstack_locations[storage->delimstack_pos] = loc;
+		storage->delimstack[storage->delimstack_pos++] = value.toktype;
 		return -1;
 	case DS_POP:
-		if(pos == 0) {
-			fprintf(stderr, "mismatched delimiters (extraneous %c)\n\ncontext:\n", (char)value.toktype);
+		if(storage->delimstack_pos == 0) {
+			fprintf(stderr, 
+				"mismatched delimiters (extraneous %c)\n\ncontext:\n", 
+				(char)value.toktype);
+
 			print_context(start, loc);
 			fputc('\n', stderr);
 			exit(EXIT_FAILURE);
@@ -1560,20 +1565,29 @@ delim_stack(enum delim_stack_action action, Token value, char *start, char* loc)
 		switch(value.toktype)
 		{
 		case '}':
-			if ('{' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (got '}' to match '%c')\n\n", stack[pos]);
+			if ('{' != storage->delimstack[--storage->delimstack_pos]) {
+				fprintf(stderr, 
+					"mismatched delimiters (got '}' to match '%c')\n\n", 
+					storage->delimstack[storage->delimstack_pos]);
+
 				goto mismatch_close;
 			}
-			return delim_stack(DS_QUERY, value, start, loc);
+			return delim_stack(storage, DS_QUERY, value, start, loc);
 		case ')':
-			if ('(' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (got ')' to match '%c')\n\n", stack[pos]);
+			if ('(' != storage->delimstack[--storage->delimstack_pos]) {
+				fprintf(stderr, 
+					"mismatched delimiters (got ')' to match '%c')\n\n", 
+					storage->delimstack[storage->delimstack_pos]);
+
 				goto mismatch_close;
 			}
 			break;
 		case ']':
-			if ('[' != stack[--pos]) {
-				fprintf(stderr, "mismatched delimiters (got ']' to match '%c')\n\n", stack[pos]);
+			if ('[' != storage->delimstack[--storage->delimstack_pos]) {
+				fprintf(stderr, 
+					"mismatched delimiters (got ']' to match '%c')\n\n",
+				       	storage->delimstack[storage->delimstack_pos]);
+
 				goto mismatch_close;
 			}
 			break;
@@ -1582,8 +1596,8 @@ delim_stack(enum delim_stack_action action, Token value, char *start, char* loc)
 		}
 		return 0;
 	case DS_QUERY:
-		for (int i = 0; i < pos; i++)
-			if(stack[i] == '{') return 0;
+		for (int i = 0; i < storage->delimstack_pos; i++)
+			if(storage->delimstack[i] == '{') return 0;
 		return 1;
 	default: 
 		assert(0);
@@ -1592,16 +1606,30 @@ delim_stack(enum delim_stack_action action, Token value, char *start, char* loc)
 
 mismatch_close:
 	fprintf(stderr, "opening delimiter context:\n\n");
-	print_context(start, locations[pos]);
+	print_context(start, storage->delimstack_locations[storage->delimstack_pos]);
 	fprintf(stderr, "\n\ninvalid closing delimiter context:\n\n");
 	print_context(start, loc);
 	fputc('\n', stderr);
 	exit(EXIT_FAILURE);
 }
 
-internal void delim_push(Token value, char *start, char* loc) { (void)delim_stack(DS_PUSH, value, start, loc); }
-internal int  delim_pop(Token value, char *start, char* loc) { return delim_stack(DS_POP, value, start, loc); }
-internal int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
+internal void 
+delim_push(StorageBuffers *storage, Token value, char *start, char* loc) 
+{ 
+	(void)delim_stack(storage, DS_PUSH, value, start, loc); 
+}
+
+internal int  
+delim_pop(StorageBuffers *storage, Token value, char *start, char* loc) 
+{ 
+	return delim_stack(storage, DS_POP, value, start, loc); 
+}
+
+internal int  
+toplevel(StorageBuffers *storage) 
+{ 
+	return delim_stack(storage, DS_QUERY, (Token){0}, 0, 0); 
+}
 
 
 internal int 
@@ -1753,15 +1781,15 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		// when scanning braced code, check that delimiters match, but that's it. 
 
 		if(t.toktype == '{' || t.toktype == '(' || t.toktype == '[') {
-			delim_push(t, text_start, lex.where_firstchar);
+			delim_push(st, t, text_start, lex.where_firstchar);
 		} else if(t.toktype == '}' || t.toktype == ')' || t.toktype == ']') {
-			if(delim_pop(t, text_start, lex.where_firstchar)) {
+			if(delim_pop(st, t, text_start, lex.where_firstchar)) {
 				tokens[ntok++] = (Token){.toktype=';'};
 				continue;
 			}
 		}
 
-		if(toplevel()) {
+		if(toplevel(st)) {
 			tokens[ntok++] = t;
 		} 
 	}
