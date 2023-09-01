@@ -114,10 +114,21 @@ typedef struct
 	} manual_include;
 
 } CSerpentArgs;
+enum { 
+	MAX_STRINGS_EXP=15, 
+	MAX_STRING_HEAP=(1<<22),
+};
+
+typedef struct {
+	int num_strings, heap_size;
+	char heap[MAX_STRING_HEAP];
+	char *table[1<<MAX_STRINGS_EXP];
+} StringTable;
 
 typedef struct {
 	Symbol symbols[10000];
 	int nsym;
+	StringTable *strtab;
 } SymbolTable;
 
 typedef struct {
@@ -125,6 +136,7 @@ typedef struct {
 	Token     *tokens_end;
 	Token     *tokens_first;   
 	SymbolTable *symtab;
+	StringTable *strtab;
 	CSerpentArgs args;
 } ParseCtx;
 
@@ -270,17 +282,6 @@ die (ParseCtx *p, const char * fmt, ...)
 	exit(EXIT_FAILURE);
 }
 
-enum { 
-	MAX_STRINGS_EXP=15, 
-	MAX_STRING_HEAP=(1<<22),
-};
-
-typedef struct {
-	int num_strings, heap_size;
-	char heap[MAX_STRING_HEAP];
-	char *table[1<<MAX_STRINGS_EXP];
-} StringTable;
-
 internal uint64_t 
 hash (char *s, int32_t len)
 {
@@ -301,12 +302,8 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 }
 
 internal char *
-intern(char *key, int keylen)
+intern_string(StringTable *st, char *key, int keylen)
 {
-	// NOTE/TODO not thread safe (fine in this application) 
-	global StringTable _st = {0};
-	StringTable *st = &_st;
-
 	if (keylen == 0) keylen = strlen(key);
 	uint64_t h = hash(key, keylen+1);
 	for (int32_t i = h;;) {
@@ -370,7 +367,7 @@ internal Symbol *
 add_symbol(SymbolTable *symtab, Symbol s)
 {
 	if(symtab->nsym == COUNT_ARRAY(symtab->symbols)) die(0, "symbol table full");
-	s.name = intern(s.name, 0);
+	s.name = intern_string(symtab->strtab, s.name, 0);
 	symtab->symbols[symtab->nsym] = s;
 	return &symtab->symbols[symtab->nsym++];
 }
@@ -1610,7 +1607,7 @@ internal int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
 internal int 
-lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+lex_file(StringTable *strtab, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
 
@@ -1711,7 +1708,7 @@ lex_file(CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long te
 			case CLEX_dqstring:
 			case CLEX_sqstring: 		
 				t.string_len = strlen(lex.string);	
-				t.string = intern(lex.string, t.string_len);
+				t.string = intern_string(strtab, lex.string, t.string_len);
 				break;
 			case CLEX_charlit:
 				t.int_number = lex.int_number;
@@ -1942,11 +1939,14 @@ cserpent_main (char *argv[])
 	char  *text         = malloc(1<<27);
 	char  *string_store = malloc(0x10000);
 	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
-	if(!(text && string_store && tokens)) die(0,"out of mem");
+	StringTable *strtab = malloc(sizeof(*strtab)); 
+
+	if(!(text && string_store && tokens && strtab)) 
+		die(0,"out of mem");
 
 	int emitted_preamble = 0;
 
-	SymbolTable symtab = {0};
+	SymbolTable symtab = {.strtab = strtab};
 
 	CSerpentArgs args = {.preprocessor = "cc -E"};
 	if (getenv("CSERPENT_PP")) 
@@ -2080,7 +2080,7 @@ cserpent_main (char *argv[])
 			if(*argv && **argv != '-') {
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
-				ntok = lex_file(args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
+				ntok = lex_file(strtab, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
 				clear_symbols(&symtab);
 				populate_symbols(
 					&symtab, 
@@ -2089,6 +2089,7 @@ cserpent_main (char *argv[])
 						.tokens        =  tokens,
 						.tokens_end    =  tokens+ntok,
 						.symtab        =  &symtab,
+						.strtab        =  strtab,
 						.args          =  args, }
 					);
 				args.disable_pp = 0;
@@ -2143,6 +2144,7 @@ cserpent_main (char *argv[])
 			.tokens_end    =  tokens+ntok,
 			.args          =  args,
 			.symtab        =  &symtab,
+			.strtab        =  strtab,
 		};
 
 		Symbol argsyms[MAX_FN_ARGS] = {0};
@@ -2188,7 +2190,7 @@ cserpent_main (char *argv[])
 
 				if (parse_file(p, namebuf, argsyms)) {
 
-					fnames[n_fnames++] = intern(namebuf, 0) ;
+					fnames[n_fnames++] = intern_string(strtab, namebuf, 0) ;
 					if(n_fnames == COUNT_ARRAY(fnames)) 
 						die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
 
