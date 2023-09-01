@@ -120,23 +120,21 @@ enum {
 };
 
 typedef struct {
+	// String table
 	int num_strings, heap_size;
 	char heap[MAX_STRING_HEAP];
 	char *table[1<<MAX_STRINGS_EXP];
-} StringTable;
 
-typedef struct {
-	Symbol symbols[10000];
+	// Symbol table
 	int nsym;
-	StringTable *strtab;
-} SymbolTable;
+	Symbol symbols[10000];
+} StorageBuffers;
 
 typedef struct {
 	Token     *tokens;   
 	Token     *tokens_end;
 	Token     *tokens_first;   
-	SymbolTable *symtab;
-	StringTable *strtab;
+	StorageBuffers *storage;
 	CSerpentArgs args;
 } ParseCtx;
 
@@ -302,7 +300,7 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 }
 
 internal char *
-intern_string(StringTable *st, char *key, int keylen)
+intern_string(StorageBuffers *st, char *key, int keylen)
 {
 	if (keylen == 0) keylen = strlen(key);
 	uint64_t h = hash(key, keylen+1);
@@ -364,34 +362,34 @@ overflow:
 
 
 internal Symbol *
-add_symbol(SymbolTable *symtab, Symbol s)
+add_symbol(StorageBuffers *storage, Symbol s)
 {
-	if(symtab->nsym == COUNT_ARRAY(symtab->symbols)) die(0, "symbol table full");
-	s.name = intern_string(symtab->strtab, s.name, 0);
-	symtab->symbols[symtab->nsym] = s;
-	return &symtab->symbols[symtab->nsym++];
+	if(storage->nsym == COUNT_ARRAY(storage->symbols)) die(0, "symbol table full");
+	s.name = intern_string(storage, s.name, 0);
+	storage->symbols[storage->nsym] = s;
+	return &storage->symbols[storage->nsym++];
 }
 
 internal Symbol *
-get_symbol(SymbolTable *symtab, char *name)
+get_symbol(StorageBuffers *storage, char *name)
 {
-	for(int i = 0; i < symtab->nsym; i++)
-		if(!strcmp(name,symtab->symbols[i].name)) return &symtab->symbols[i];
+	for(int i = 0; i < storage->nsym; i++)
+		if(!strcmp(name,storage->symbols[i].name)) return &storage->symbols[i];
 	return 0;
 }
 
 internal Symbol *
-get_symbol_or_die(SymbolTable *symtab, char *name)
+get_symbol_or_die(StorageBuffers *storage, char *name)
 {
-	Symbol *s = get_symbol(symtab, name);
+	Symbol *s = get_symbol(storage, name);
 	if(!s) die(0, "Unknown type: %s", name);
 	return s;
 }
 
 internal void 
-clear_symbols(SymbolTable *symtab)
+clear_symbols(StorageBuffers *storage)
 {
-	symtab->nsym = 0;
+	storage->nsym = 0;
 }
 
 internal int 
@@ -1234,7 +1232,7 @@ typedef_name(ParseCtx *p, Type *t)
 	if(p->tokens[0].toktype == CLEX_id) {
 
 		Symbol *s = 0;
-		if ((s = get_symbol(p->symtab, p->tokens[0].string))) {
+		if ((s = get_symbol(p->storage, p->tokens[0].string))) {
 			if(t) *t = s->type;
 			p->tokens++;
 			return 1;
@@ -1308,7 +1306,7 @@ supported_typedef(ParseCtx *p, Symbol *s)
 }
 
 internal void 
-populate_symbols(SymbolTable *symtab, ParseCtx p)
+populate_symbols(StorageBuffers *storage, ParseCtx p)
 {
 	while(p.tokens != p.tokens_end) {
 
@@ -1320,7 +1318,7 @@ populate_symbols(SymbolTable *symtab, ParseCtx p)
 
 		Symbol s = {0};
 		if (supported_typedef(&p, &s)) {
-			add_symbol(symtab, s);
+			add_symbol(storage, s);
 
 			if(p.args.verbose) {
 				char buf[200] = {0};
@@ -1607,7 +1605,7 @@ internal int  toplevel(void) { return delim_stack(DS_QUERY, (Token){0}, 0, 0); }
 
 
 internal int 
-lex_file(StringTable *strtab, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
 
@@ -1708,7 +1706,7 @@ lex_file(StringTable *strtab, CSerpentArgs args, long long tokens_maxnum, Token 
 			case CLEX_dqstring:
 			case CLEX_sqstring: 		
 				t.string_len = strlen(lex.string);	
-				t.string = intern_string(strtab, lex.string, t.string_len);
+				t.string = intern_string(st, lex.string, t.string_len);
 				break;
 			case CLEX_charlit:
 				t.int_number = lex.int_number;
@@ -1752,7 +1750,7 @@ lex_file(StringTable *strtab, CSerpentArgs args, long long tokens_maxnum, Token 
 		}		
 
 		// skip all braced code.
-		// when scanning braced code, check that delimiters mathc, but that's it. 
+		// when scanning braced code, check that delimiters match, but that's it. 
 
 		if(t.toktype == '{' || t.toktype == '(' || t.toktype == '[') {
 			delim_push(t, text_start, lex.where_firstchar);
@@ -1936,17 +1934,15 @@ cserpent_main (char *argv[])
 		Allocate buffers
 	*/
 	
-	char  *text         = malloc(1<<27);
-	char  *string_store = malloc(0x10000);
-	Token *tokens       = malloc((1<<27) * sizeof(*tokens));
-	StringTable *strtab = malloc(sizeof(*strtab)); 
+	char  *text         = calloc(1, 1<<27);
+	char  *string_store = calloc(1, 0x10000);
+	Token *tokens       = calloc(1, (1<<27) * sizeof(*tokens));
+	StorageBuffers *storage = calloc(1, sizeof(*storage)); 
 
-	if(!(text && string_store && tokens && strtab)) 
+	if(!(text && string_store && tokens && storage)) 
 		die(0,"out of mem");
 
 	int emitted_preamble = 0;
-
-	SymbolTable symtab = {.strtab = strtab};
 
 	CSerpentArgs args = {.preprocessor = "cc -E"};
 	if (getenv("CSERPENT_PP")) 
@@ -2061,7 +2057,7 @@ cserpent_main (char *argv[])
 					.name = *argv,
 					.type = {.category = T_VOID},
 				};
-				(void)add_symbol(&symtab, newtype);	
+				(void)add_symbol(storage, newtype);	
 				argv++;
 			} else {
 				die(0, "-t flag must be followed by a type name");
@@ -2080,16 +2076,15 @@ cserpent_main (char *argv[])
 			if(*argv && **argv != '-') {
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
-				ntok = lex_file(strtab, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
-				clear_symbols(&symtab);
+				ntok = lex_file(storage, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
+				clear_symbols(storage);
 				populate_symbols(
-					&symtab, 
+					storage, 
 					(ParseCtx) {
 						.tokens_first  =  tokens,
 						.tokens        =  tokens,
 						.tokens_end    =  tokens+ntok,
-						.symtab        =  &symtab,
-						.strtab        =  strtab,
+						.storage       =  storage,
 						.args          =  args, }
 					);
 				args.disable_pp = 0;
@@ -2143,8 +2138,7 @@ cserpent_main (char *argv[])
 			.tokens        =  tokens,
 			.tokens_end    =  tokens+ntok,
 			.args          =  args,
-			.symtab        =  &symtab,
-			.strtab        =  strtab,
+			.storage       =  storage,
 		};
 
 		Symbol argsyms[MAX_FN_ARGS] = {0};
@@ -2163,15 +2157,15 @@ cserpent_main (char *argv[])
 					the first version that appears.
 				*/
 
-				{get_symbol_or_die(&symtab, "int64_t")->type, 'l'},
-				{get_symbol_or_die(&symtab, "int32_t")->type, 'i'},
-				{get_symbol_or_die(&symtab, "int16_t")->type, 's'},
-				{get_symbol_or_die(&symtab, "int8_t")->type,  'b'},
+				{get_symbol_or_die(storage, "int64_t")->type, 'l'},
+				{get_symbol_or_die(storage, "int32_t")->type, 'i'},
+				{get_symbol_or_die(storage, "int16_t")->type, 's'},
+				{get_symbol_or_die(storage, "int8_t")->type,  'b'},
 
-				{get_symbol_or_die(&symtab, "uint64_t")->type, 'L'},
-				{get_symbol_or_die(&symtab, "uint32_t")->type, 'I'},
-				{get_symbol_or_die(&symtab, "uint16_t")->type, 'S'},
-				{get_symbol_or_die(&symtab, "uint8_t")->type,  'B'},
+				{get_symbol_or_die(storage, "uint64_t")->type, 'L'},
+				{get_symbol_or_die(storage, "uint32_t")->type, 'I'},
+				{get_symbol_or_die(storage, "uint16_t")->type, 'S'},
+				{get_symbol_or_die(storage, "uint8_t")->type,  'B'},
 
 				{(Type){.category=T_DOUBLE}, 'd'},
 				{(Type){.category=T_FLOAT},  'f'},
@@ -2190,7 +2184,7 @@ cserpent_main (char *argv[])
 
 				if (parse_file(p, namebuf, argsyms)) {
 
-					fnames[n_fnames++] = intern_string(strtab, namebuf, 0) ;
+					fnames[n_fnames++] = intern_string(storage, namebuf, 0) ;
 					if(n_fnames == COUNT_ARRAY(fnames)) 
 						die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
 
