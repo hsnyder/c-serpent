@@ -2257,5 +2257,5 @@ main (int argc, char *argv[])
 	(void)argc;
 	argv++;
 	if(!*argv) usage();
-	return cserpent_main(argv);
+	else return cserpent_main(argv);
 }
