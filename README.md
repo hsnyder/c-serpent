@@ -4,29 +4,60 @@ C-SERPENT
 =========
 
 C-serpent is a tool designed to make it easier to call C code from Python.
-Given a list of files and functions contained within those files, c-serpent
-generates code (using the Python C API) that can be compiled into a Python
-extension module, and which allows Python code to call the specified C 
-functions.
+CPython (the main Python implementation) has a C API that makes it possible
+to write "extension modles" in C. These extension modules are imported and
+called just like regular Python code, but are actually written in C.
+However, that API has a bit of a learning curve. C-serpent aims to make 
+this process easier by automatically generating the necessary "wrapper" 
+code that is required to make a C function callable just like an ordinary
+python function. 
 
-C-serpent is not intended to be completely general-purpose. In particular:
+C-serpent is a standalone program. Given a list of file paths and function 
+names, c-serpent reads the specified files and parses the type signatures 
+of the specified functions, then generates wrapper functions which use the
+Python C API to do the necessary conversions between Python datatypes and
+C datatypes, and so on. 
 
- - It only supports wrapping a subset of all possible C function signatures. 
-   In practice, the limitations are probably acceptable for 95+% of cases.
+C-serpent is not completely general-purpose:
 
- - It assumes the use case is scientific or numerical computing, making use
-   of numpy.
+ - It only supports wrapping a subset of all possible C function signatures 
+   (details below).
 
-To elaborate on the second point, the wrappers will only accept numpy arrays
-as values for pointer arguments to the underlying function. The exceptions 
-to this are `char*` arguments, which are assumed to be strings 
-(use `signed char*` for int8), and `void*` which are converted to and from
-Python integers. `char*` and `void*` are also supported as return types, but
-other pointer types are not (so define your output arrays in Python, and 
-populate them with C code). Non-void pointer arguments also accept `None`, 
-which results in a null pointer being passed to the C function.
+ - It assumes the use of the popular `numpy` package for numerical arrays. 
 
-For example, consider this C function:
+
+| C type                     | Python type                |
+| -------------------------- | -------------------------- |
+| signed/unsigned char       | int                        |
+| signed/unsigned short      | int                        |
+| signed/unsigned int        | int                        |
+| signed/unsigned long       | int                        |
+| signed/unsigned long long  | int                        |
+| float                      | float                      |
+| double                     | float                      | 
+| long double                | (not supported)            |
+| complex float              | (not supported)            |
+| complex double             | (not supported)            |
+| complex long double        | (not supported)            |
+| char*                      | str                        |
+| void*                      | int                        |
+| signed/unsigned char*      | numpy array (int8/uint8)   |
+| signed/unsigned short*     | numpy array (int16/uint16) |
+| signed/unsigned int*       | numpy array (int32/uint32) |
+| signed/unsigned long*      | numpy array (varies)       |
+| signed/unsigned long long* | numpy array (int64/uint64) |
+
+`long*` arguments are mapped either to 32 or 64 bit integers, depending
+on the size of `long` on your platform (use `int32_t`/`int64_t` from 
+`stdint.h` to avoid this). `char*` arguments are assumed to be strings 
+(use `signed char*` for int8). `void*` arguments are converted to and 
+from Python integers. `char*` and `void*` are also supported as return 
+types, but other pointer types are not (so define your output arrays in 
+Python, and populate them with C code). Non-void pointer arguments also 
+accept `None`, which results in a null pointer being passed to the C function.
+`stdint.h` types are supported, since they are just typedefs.
+
+Example, consider this C function:
 
     double mean_i32(int N, int32_t *array) 
     {
@@ -37,42 +68,81 @@ For example, consider this C function:
 
 The resulting wrapper will accept a Python integer for `N`, and either `None` 
 or a numpy array with `dtype=numpy.int32` for `array`. An exception will
-be raised if the types don't match. 
+be raised if the supplied types don't match. 
 
 Compiling
 ---------
 
-Just point your C compiler at c-serpent.c. For example on a unix-derivative, 
+To built C-serpent, just point your C compiler at c-serpent.c. 
+For example on a unix-derivative, 
 
     $ cc -g c-serpent.c -o cserpent 
 
 If you can define `CSERPENT_DISABLE_ASSERT` to compile out assertions, if
 you wish to.
         
-
 Usage
 -----
 
-Typical usage example: 
+C-serpent generates code, so you'll have to compile that code into an extension
+module in order to actually import and use the module. 
 
-    $ c-serpent -m coolmodule -f my_c_file.c function1 function2 > wrappers.c   
-    $ cc -fPIC -shared -I/path/to/python/headers \
-         wrappers.c my_c_file.c \
-         -lpython -o coolmodule.so
+Consider the same example function from above:
 
-C-serpent processes its input arguments in-order. First specify the name of the
-output python module (which must match the name of the shared library that
-you compile) by using the argument sequence '-m modulename'. Then, specify
-at least one file, using '-f filename.c'. Then, list the names of the 
-functions that you wish to generate wrappers for. You can specify multiple
-files like so: '-f minmax.c min max -f avg.c mean median'. The functions are
-assumed to be contained in the file specified by the most recent '-f' flag.
+    double mean_i32(int N, int32_t *array) 
+    {
+        double sum = 0.0;
+        for (int i = 0; i < N; i++) sum += array[i];
+        return sum/N;
+    }
+
+To make this function callable from Python, you might do the following:
+
+ - save that function to a file (e.g. `mean.c`)
+
+ - ask python where its headers are
+
+    $ python
+    >>> from distutils.sysconfig import get_python_inc
+    >>> get_python_inc()
+    '/usr/include/python3.11'
+    >>> import numpy
+    >>> numpy.get_include()
+    '/usr/lib/python3.11/site-packages/numpy/core/include'
+
+ - use c-serpent to generate the wrapper code
+
+    $ c-serpent -m means -f mean.c mean_i32 > mean_wrappers.c   
+
+ - compile the wrapper code and the original C code into an extension module
+
+    $ cc -fPIC -shared \
+         -I/usr/lib/python3.11/site-packages/numpy/core/include \
+         -I/usr/include/python3.11 \
+         mean_wrappers.c mean.c \
+         -lpython -o means.so
+
+ - call it:
+ 
+    $ python
+    >>> import means, numpy
+    >>> x = numpy.array([1,2,3,4], dtype=numpy.int32)
+    >>> means.mean_i32(len(x), x)
+    2.5
+
+C-serpent processes its command-line arguments in order. 
+First specify the name of the output python module (which must match the name 
+of the shared library that you plan to compile) by using the argument sequence 
+'-m modulename'. Then, specify a file, using '-f filename.c'.  Then, list the 
+names of the functions within that file that you wish to generate wrappers for. 
+You can specify multiple files like so: 
+'-f minmax.c min max -f avg.c mean median'. 
 
 C-serpent invokes the system preprocessor and scans for typedefs in the 
 resulting file. It only understands a subset of all possible C typedefs, but
-it works for stdint, size_t, and so on. The preprocessor to use is 'cc -E' 
-by default, but this can be overridden with the -p flag, or the CSERPENT_PP
-environment variable (the latter takes precedence if both are supplied).
+it works for `stdint.h`, `size_t`, and so on. The preprocessor used is 'cc -E' 
+by default, but this can be overridden with the -p flag, or the `CSERPENT_PP`
+environment variable (the former takes precedence if both are supplied).
 
 Flags:   
                                                                                
@@ -85,14 +155,17 @@ Flags:
                                                                                    
     -v   verbose (prints a list of typedefs that were parsed, for debugging).  
                                                                                    
-    -D   disable including declarations for the functions to be wrapped in the   
-         generated wrapper file this might be used to facilitate amalgamation   
-         builds, for example.  
-                                                                                                                                                               
-    -x   if you have some extra handwritten wrappers, you can use '-x whatever'    
-         to include the function 'whatever' (calling 'wrap_whatever') in the       
-         generated module. You'll need to prepend the necessary code to the file   
-         that c-serpent generates.  
+    -D   by default, the output wrapper file contains declarations for the functions
+         to be wrapped. This is useful if you don't want to write a separate `.h`
+         file, but can be inconvenient if you're including all source files in one
+         translation unit. The `-D` flag suppresses these declarations.
+
+    -x   if you are writing some wrappers by hand (e.g. because C-serpent doesn't
+         support a particular type or usage pattern), you can use '-x whatever'    
+         to include the function 'whatever' in the generated module definition. 
+         The function name as seen by Python will be `whatever`, and you'll need to
+         supply a function called `wrap_whatever`, which will need to be prepended
+         to the code that C-serpent generates. 
                                                                                    
     -p   the following argument specifies the preprocessor to use for future   
          files, if different from the default 'cc -E'. Use quotes if you need  
@@ -108,7 +181,7 @@ Flags:
 
          this flag only lasts until the next file change (i.e. -f)   
                                                                                    
-    -i   the following argument is a filename, to be inlcuded before the next    
+    -i   the following argument is a filename, to be included before the next    
          file processed (for use with -P).  
 
     -I   the following argument is a directory path, to be searched for any    
