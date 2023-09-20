@@ -46,6 +46,10 @@ C-serpent is not completely general-purpose:
 | signed/unsigned int*       | numpy array (int32/uint32) |
 | signed/unsigned long*      | numpy array (varies)       |
 | signed/unsigned long long* | numpy array (int64/uint64) |
+| float*                     | numpy array (float32)      |
+| double*                    | numpy array (float64)      |
+| complex float*             | numpy array (complex64)    |
+| complex double*            | numpy array (complex128)   |
 
 `long*` arguments are mapped either to 32 or 64 bit integers, depending
 on the size of `long` on your platform (use `int32_t`/`int64_t` from 
