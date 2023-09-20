@@ -102,33 +102,41 @@ To make this function callable from Python, you might do the following:
 
 2. ask python where its headers are
 
-     $ python
-     >>> from distutils.sysconfig import get_python_inc
-     >>> get_python_inc()
-     '/usr/include/python3.11'
-     >>> import numpy
-     >>> numpy.get_include()
-     '/usr/lib/python3.11/site-packages/numpy/core/include'
+```
+$ python
+>>> from distutils.sysconfig import get_python_inc
+>>> get_python_inc()
+'/usr/include/python3.11'
+>>> import numpy
+>>> numpy.get_include()
+'/usr/lib/python3.11/site-packages/numpy/core/include'
+```
 
 3. use c-serpent to generate the wrapper code
 
-     $ c-serpent -m means -f mean.c mean_i32 > mean_wrappers.c   
+```
+$ c-serpent -m means -f mean.c mean_i32 > mean_wrappers.c   
+```
 
 4. compile the wrapper code and the original C code into an extension module
 
-     $ cc -fPIC -shared \
-          -I/usr/lib/python3.11/site-packages/numpy/core/include \
-          -I/usr/include/python3.11 \
-          mean_wrappers.c mean.c \
-          -lpython -o means.so
+```
+$ cc -fPIC -shared \
+     -I/usr/lib/python3.11/site-packages/numpy/core/include \
+     -I/usr/include/python3.11 \
+     mean_wrappers.c mean.c \
+     -lpython -o means.so
+```
 
 5. call it:
  
-     $ python
-     >>> import means, numpy
-     >>> x = numpy.array([1,2,3,4], dtype=numpy.int32)
-     >>> means.mean_i32(len(x), x)
-     2.5
+```
+$ python
+>>> import means, numpy
+>>> x = numpy.array([1,2,3,4], dtype=numpy.int32)
+>>> means.mean_i32(len(x), x)
+2.5
+```
 
 C-serpent processes its command-line arguments in order. 
 First specify the name of the output python module (which must match the name 
