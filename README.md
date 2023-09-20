@@ -98,9 +98,9 @@ Consider the same example function from above:
 
 To make this function callable from Python, you might do the following:
 
- - save that function to a file (e.g. `mean.c`)
+1. save that function to a file (e.g. `mean.c`)
 
- - ask python where its headers are
+2. ask python where its headers are
 
      $ python
      >>> from distutils.sysconfig import get_python_inc
@@ -110,11 +110,11 @@ To make this function callable from Python, you might do the following:
      >>> numpy.get_include()
      '/usr/lib/python3.11/site-packages/numpy/core/include'
 
- - use c-serpent to generate the wrapper code
+3. use c-serpent to generate the wrapper code
 
      $ c-serpent -m means -f mean.c mean_i32 > mean_wrappers.c   
 
- - compile the wrapper code and the original C code into an extension module
+4. compile the wrapper code and the original C code into an extension module
 
      $ cc -fPIC -shared \
           -I/usr/lib/python3.11/site-packages/numpy/core/include \
@@ -122,7 +122,7 @@ To make this function callable from Python, you might do the following:
           mean_wrappers.c mean.c \
           -lpython -o means.so
 
- - call it:
+5. call it:
  
      $ python
      >>> import means, numpy
