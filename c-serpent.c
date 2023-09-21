@@ -1367,6 +1367,7 @@ arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 	if(eat_token(p,'[')) {
 		if(!modify_type_pointer(p, &tmp.type)) {
 			if(fatal) die(p, "error wrapping function '%s' in '%s': unsupported type", fn, p->args.filename);
+			RESTORE(p);
 			return 0;
 		}
 		while(1) {
