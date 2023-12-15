@@ -77,10 +77,10 @@ be raised if the supplied types don't match.
 Compiling
 ---------
 
-To built C-serpent, just point your C compiler at c-serpent.c. 
+To built C-serpent, just point your C compiler at cserpent.c. 
 For example on a unix-derivative, 
 
-    $ cc -g c-serpent.c -o cserpent 
+    $ cc -g cserpent.c -o cserpent 
 
 If you can define `CSERPENT_DISABLE_ASSERT` to compile out assertions, if
 you wish to.
@@ -116,10 +116,10 @@ $ python
 '/usr/lib/python3.11/site-packages/numpy/core/include'
 ```
 
-3. use c-serpent to generate the wrapper code
+3. use cserpent to generate the wrapper code
 
 ```
-$ c-serpent -m means -f mean.c mean_i32 > mean_wrappers.c   
+$ cserpent -m means -f mean.c mean_i32 > mean_wrappers.c   
 ```
 
 4. compile the wrapper code and the original C code into an extension module
@@ -260,7 +260,7 @@ Generic functions:
      You do not need to supply all of these variants; c-serpent will support   
      whichever variants it finds. 
                                                                                
-     Example: consider: $ ./c-serpent -m mymodule -f whatever.c -g mean        
+     Example: consider: $ ./cserpent -m mymodule -f whatever.c -g mean        
      If whatever.c contains the following functions, then python code will be  
      able to call `mymodule.mean(N, arr)` where arr is a float or double array 
                                                                                
