@@ -89,6 +89,8 @@ typedef struct { // lexer token
 	};
 } Token;
 
+#include <setjmp.h>
+
 typedef struct
 {
 	int verbose;
@@ -99,8 +101,8 @@ typedef struct
 	int disable_pp;
 	int generic;
 	int generic_keep_trailing_underscore;
-	const char *dirs[MAX_DIRS];
 	int ndirs;
+	const char *dirs[MAX_DIRS];
 
 	struct {
 		const char *fn;
@@ -113,9 +115,10 @@ typedef struct
 		int nfiles;
 	} manual_include;
 
+	FILE *ostream;
+	FILE *estream;
+
 } CSerpentArgs;
-
-
 
 enum { 
 	MAX_STRINGS_EXP=15, 
@@ -279,17 +282,34 @@ dump_context(FILE *f, ParseCtx *p)
 	fprintf(f,"\n");
 }
 
+internal _Noreturn void
+terminate(CSerpentArgs *args) {
+	(void) args;
+	exit(EXIT_FAILURE);
+}
 
 internal _Noreturn void
 die (ParseCtx *p, const char * fmt, ...)
 {
+	FILE *where = p ? p->args.estream : stderr;
 	va_list va;
 	va_start(va, fmt);
-	vfprintf(stderr, fmt, va);
+	vfprintf(where, fmt, va);
 	va_end(va);
-	fprintf(stderr, "\n");
-	if(p) dump_context(stderr, p);
-	exit(EXIT_FAILURE);
+	fprintf(where, "\n");
+	if(p) dump_context(where, p);
+	terminate(&p->args);
+}
+
+internal _Noreturn void
+die2 (CSerpentArgs args, const char * fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	vfprintf(args.estream, fmt, va);
+	va_end(va);
+	fprintf(args.estream, "\n");
+	terminate(&args);
 }
 
 internal uint64_t 
@@ -312,7 +332,7 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 }
 
 internal char *
-intern_string(StorageBuffers *st, char *key, int keylen)
+intern_string(CSerpentArgs args, StorageBuffers *st, char *key, int keylen)
 {
 	if (keylen == 0) keylen = strlen(key);
 	uint64_t h = hash(key, keylen+1);
@@ -321,9 +341,9 @@ intern_string(StorageBuffers *st, char *key, int keylen)
 		if (!st->table[i]) {
 			// empty, insert here
 			if (st->num_strings+1 == COUNT_ARRAY(st->table)/2)
-				die(0, "intern: string table full");
+				die2(args, "intern: string table full");
 			if (st->heap_size + keylen + 1 >= MAX_STRING_HEAP)
-				die(0, "intern: string heap full");
+				die2(args, "intern: string heap full");
 			st->num_strings++;
 			st->table[i] = st->heap+st->heap_size;
 			memcpy(st->table[i], key, keylen);
@@ -338,7 +358,7 @@ intern_string(StorageBuffers *st, char *key, int keylen)
 }
 
 internal int 
-xatoi (const char *x, int *nchars_read)
+xatoi (CSerpentArgs args, const char *x, int *nchars_read)
 {
 	const char * save = x;
 
@@ -363,21 +383,21 @@ xatoi (const char *x, int *nchars_read)
 		x++;
 	}
 
-	if (!n) die(0, "couldn't parse '%6s' as an integer", save);
+	if (!n) die2(args, "couldn't parse '%6s' as an integer", save);
 
 	if (nchars_read) *nchars_read = x-save;
 	return v * sign;
 
 overflow:
-	die(0, "integer overflow when trying to convert '%14s'", save);
+	die2(args, "integer overflow when trying to convert '%14s'", save);
 }
 
 
 internal Symbol *
-add_symbol(StorageBuffers *storage, Symbol s)
+add_symbol(CSerpentArgs args, StorageBuffers *storage, Symbol s)
 {
-	if(storage->nsym == COUNT_ARRAY(storage->symbols)) die(0, "symbol table full");
-	s.name = intern_string(storage, s.name, 0);
+	if(storage->nsym == COUNT_ARRAY(storage->symbols)) die2(args, "symbol table full");
+	s.name = intern_string(args, storage, s.name, 0);
 	storage->symbols[storage->nsym] = s;
 	return &storage->symbols[storage->nsym++];
 }
@@ -391,10 +411,10 @@ get_symbol(StorageBuffers *storage, char *name)
 }
 
 internal Symbol *
-get_symbol_or_die(StorageBuffers *storage, char *name)
+get_symbol_or_die(CSerpentArgs args, StorageBuffers *storage, char *name)
 {
 	Symbol *s = get_symbol(storage, name);
-	if(!s) die(0, "Unknown type: %s", name);
+	if(!s) die2(args, "Unknown type: %s", name);
 	return s;
 }
 
@@ -648,11 +668,11 @@ compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int 
 */
 
 internal void 
-emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
+emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
 {
-	if(!flags.modulename) return;
+	if(!args.modulename) return;
 
-	printf("static PyMethodDef module_functions[] = { \n");
+	fprintf(args.ostream, "static PyMethodDef module_functions[] = { \n");
 
 	for (int i = 0; i < n_fnames; i++) {
 		char name[500] = {0};
@@ -660,11 +680,11 @@ emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_
 		assert(ssizeof(name)-1 > len);
 		if(fname_needs_strip_underscore[i]) name[len-1] = 0;
 
-		printf("{\"%s\", (PyCFunction) wrap_%s, METH_VARARGS|METH_KEYWORDS, \"\"},\n", 
+		fprintf(args.ostream, "{\"%s\", (PyCFunction) wrap_%s, METH_VARARGS|METH_KEYWORDS, \"\"},\n", 
 			name, fnames[i]);
 	}
 
-	printf(
+	fprintf(args.ostream,
 	"	{ NULL, NULL, 0, NULL } \n"
 	"}; \n"
 	"\n\n"
@@ -699,13 +719,13 @@ emit_module(CSerpentArgs flags, int n_fnames, const char *fnames[], _Bool fname_
 	"PyMODINIT_FUNC PyInit_%s (void) \n"
 	"{ \n"
 	"	return module_init(); \n"
-	"} \n", flags.modulename, flags.modulename);
+	"} \n", args.modulename, args.modulename);
 }
 
 internal void 
-emit_preamble(CSerpentArgs flags)
+emit_preamble(CSerpentArgs args)
 {
-	(void) flags;
+	(void) args;
 	global const char * preamble = 
 	"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
 	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
@@ -727,7 +747,7 @@ emit_preamble(CSerpentArgs flags)
 	"	_Complex float:     NPY_CFLOAT,    \\\n"
 	"	_Complex double:    NPY_CDOUBLE    \\\n"
 	"	)\n";
-	printf("%s\n", preamble);
+	fprintf(args.ostream, "%s\n", preamble);
 }
 
 internal int 
@@ -779,91 +799,91 @@ basetype(Type t)
 }
 
 internal void 
-emit_exceptionhandling(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
+emit_exceptionhandling(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 {
-	if(flags.error_handling.active) {
+	if(args.error_handling.active) {
 		
-		if(flags.error_handling.fn) {
-			assert(flags.error_handling.argno >= 0);
+		if(args.error_handling.fn) {
+			assert(args.error_handling.argno >= 0);
 
-			if(flags.error_handling.argno > n_fnargs)
-				die(0, "Error wrapping function '%s' in file '%s': "
+			if(args.error_handling.argno > n_fnargs)
+				die2(args, "Error wrapping function '%s' in file '%s': "
 				    "flag -e,%i,%s was specified, but function only has "
 				    "%i arguments", 
-				    fn, flags.filename, 
-				    flags.error_handling.argno, flags.error_handling.fn,
+				    fn, args.filename, 
+				    args.error_handling.argno, args.error_handling.fn,
 				    n_fnargs);
 
-			char *exnarg = flags.error_handling.argno == 0 
+			char *exnarg = args.error_handling.argno == 0 
 				? "rtn"
-				: fnargs[flags.error_handling.argno-1].name;
+				: fnargs[args.error_handling.argno-1].name;
 
-			printf("    const char *_exn = %s(%s);  \n", flags.error_handling.fn, exnarg);
-			printf("    if(_exn) {  \n");
-			printf("        PyErr_SetString(PyExc_RuntimeError, _exn);  \n");
-			printf("        return 0;  \n");
-			printf("    }  \n");
+			fprintf(args.ostream, "    const char *_exn = %s(%s);  \n", args.error_handling.fn, exnarg);
+			fprintf(args.ostream, "    if(_exn) {  \n");
+			fprintf(args.ostream, "        PyErr_SetString(PyExc_RuntimeError, _exn);  \n");
+			fprintf(args.ostream, "        return 0;  \n");
+			fprintf(args.ostream, "    }  \n");
 		} else {
-			assert(flags.error_handling.argno == 0);
+			assert(args.error_handling.argno == 0);
 	
-			printf("    if(rtn) {  \n");
-			printf("        PyErr_SetString(PyExc_RuntimeError, rtn);  \n");
-			printf("        return 0;  \n");
-			printf("    }  \n");
+			fprintf(args.ostream, "    if(rtn) {  \n");
+			fprintf(args.ostream, "        PyErr_SetString(PyExc_RuntimeError, rtn);  \n");
+			fprintf(args.ostream, "        return 0;  \n");
+			fprintf(args.ostream, "    }  \n");
 		}	
 	}
 }
 
 internal void 
-emit_call(const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[])
+emit_call(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 {
-	printf("%s (", fn);
+	fprintf(args.ostream, "%s (", fn);
 
 	for(int i = 0; i < n_fnargs; i++)
 	{
 		char *sep  =  i ? ", " : "";
 		if (is_array(fnargs[i].type))
-			printf("%s%s_data", sep, fnargs[i].name);
+			fprintf(args.ostream, "%s%s_data", sep, fnargs[i].name);
 		else 
-			printf("%s%s", sep, fnargs[i].name);
+			fprintf(args.ostream, "%s%s", sep, fnargs[i].name);
 	}
 
-	printf(");\n");
+	fprintf(args.ostream, ");\n");
 }
 
 internal int 
-emit_py_buildvalue_fmt_char(Type t) 
+emit_py_buildvalue_fmt_char(CSerpentArgs args, Type t) 
 {
-	if      (t.category == T_CHAR) printf("b");
-	else if (t.category == T_DOUBLE && !t.is_complex && !t.is_imaginary) printf("d");
-	else if (t.category == T_FLOAT && !t.is_complex && !t.is_imaginary) printf("f");
-	else if (t.category == T_SHORT && !t.is_unsigned) printf("h");
-	else if (t.category == T_INT && !t.is_unsigned) printf("i");
-	else if (t.category == T_LONG && !t.is_unsigned) printf("l");
-	else if (t.category == T_LLONG && !t.is_unsigned) printf("L");
-	else if (t.category == T_SHORT) printf("H");
-	else if (t.category == T_INT) printf("I");
-	else if (t.category == T_LONG) printf("k");
-	else if (t.category == T_LLONG) printf("K");
-	else if (t.category == T_BOOL) printf("p");
+	if      (t.category == T_CHAR) fprintf(args.ostream, "b");
+	else if (t.category == T_DOUBLE && !t.is_complex && !t.is_imaginary) fprintf(args.ostream, "d");
+	else if (t.category == T_FLOAT && !t.is_complex && !t.is_imaginary) fprintf(args.ostream, "f");
+	else if (t.category == T_SHORT && !t.is_unsigned) fprintf(args.ostream, "h");
+	else if (t.category == T_INT && !t.is_unsigned) fprintf(args.ostream, "i");
+	else if (t.category == T_LONG && !t.is_unsigned) fprintf(args.ostream, "l");
+	else if (t.category == T_LLONG && !t.is_unsigned) fprintf(args.ostream, "L");
+	else if (t.category == T_SHORT) fprintf(args.ostream, "H");
+	else if (t.category == T_INT) fprintf(args.ostream, "I");
+	else if (t.category == T_LONG) fprintf(args.ostream, "k");
+	else if (t.category == T_LLONG) fprintf(args.ostream, "K");
+	else if (t.category == T_BOOL) fprintf(args.ostream, "p");
 	else return 0;
 	return 1;
 }
 
 internal void 
-emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[], Type rtntype)
+emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], Type rtntype)
 {
 	assert(n_fnargs >= 0);
 
 	// declaration for function to be wrapped
-	if(!flags.disable_declarations) {
+	if(!args.disable_declarations) {
 		char buf[200] = {0};
 		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
-		printf("%s %s (", buf, fn);
+		fprintf(args.ostream, "%s %s (", buf, fn);
 
 		if (n_fnargs == 0) 
-			printf("void");
+			fprintf(args.ostream, "void");
 
 		else for(int i = 0; i < n_fnargs; i++)
 		{
@@ -871,90 +891,90 @@ emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[],
 			assert(ssizeof(buf) > repr_type(sizeof(buf), buf, fnargs[i].type));
 
 			char * sep  =  i ? ", " : "";
-			printf("%s%s %s", sep, buf, fnargs[i].name);
+			fprintf(args.ostream, "%s%s %s", sep, buf, fnargs[i].name);
 		}
 
 
-		printf(");\n");
+		fprintf(args.ostream, ");\n");
 	}
 
 	// start of wrapper definition
-	printf("PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
-	printf("    (void) self;\n");
+	fprintf(args.ostream, "PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
+	fprintf(args.ostream, "    (void) self;\n");
 
 	if(n_fnargs) {
 
 		// keyword name list
-		printf("    static char *kwlist[] = {");
+		fprintf(args.ostream, "    static char *kwlist[] = {");
 	        for(int i = 0; i < n_fnargs; i++)
-			printf("\n        \"%s\",", fnargs[i].name);
-		printf("0};\n");
+			fprintf(args.ostream, "\n        \"%s\",", fnargs[i].name);
+		fprintf(args.ostream, "0};\n");
 
 		// declare a C variable for each argument
 		for(int i = 0; i < n_fnargs; i++) {
 			Symbol arg = fnargs[i];
 
 			if (is_string(arg.type)) {
-				printf("    char * %s = 0;\n", arg.name);
+				fprintf(args.ostream, "    char * %s = 0;\n", arg.name);
 			}
 
 			else if (is_voidptr(arg.type)) {
-				printf("    unsigned long long %s_ull = 0;\n", arg.name);
-				printf("    void * %s = 0;\n", arg.name);
+				fprintf(args.ostream, "    unsigned long long %s_ull = 0;\n", arg.name);
+				fprintf(args.ostream, "    void * %s = 0;\n", arg.name);
 			}
 
 			else if (is_array(arg.type)) {
-				printf("    PyObject *%s_obj = NULL;\n", arg.name);
-				printf("    void *%s_data    = NULL;\n", arg.name);
+				fprintf(args.ostream, "    PyObject *%s_obj = NULL;\n", arg.name);
+				fprintf(args.ostream, "    void *%s_data    = NULL;\n", arg.name);
 			}
 
 			else if (arg.type.category == T_BOOL) {
-				printf("    int %s = 0;\n", arg.name);
+				fprintf(args.ostream, "    int %s = 0;\n", arg.name);
 			}
 
 			else {
 				char buf[200] = {0};
 				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, arg.type));
-				printf("    %s %s = {0};\n", buf, arg.name);
+				fprintf(args.ostream, "    %s %s = {0};\n", buf, arg.name);
 			}
 		}
 
 		// parse python arguments into the above declared C variables
-		printf("\n    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"");
+		fprintf(args.ostream, "\n    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"");
 		for (int i = 0; i < n_fnargs; i++) {
 			// building the format string for ParseTupleAndKeywords
 			Symbol arg = fnargs[i];
 
-			if      (is_string(arg.type))  printf("z");
-			else if (is_voidptr(arg.type)) printf("K");
-			else if (is_array(arg.type))   printf("O");
+			if      (is_string(arg.type))  fprintf(args.ostream, "z");
+			else if (is_voidptr(arg.type)) fprintf(args.ostream, "K");
+			else if (is_array(arg.type))   fprintf(args.ostream, "O");
 			else {
 				Type t = arg.type;
-				if (!emit_py_buildvalue_fmt_char(t)) {
+				if (!emit_py_buildvalue_fmt_char(args, t)) {
 
 					char buf[200] = {0};
 					assert(ssizeof(buf) > repr_type(sizeof(buf), buf, t));
-					die(0, "Error wrapping function '%s' in file '%s': "
+					die2(args, "Error wrapping function '%s' in file '%s': "
 					    "argument %i has type '%s', "
 					    "which c-serpent doesn't know how to convert "
 					    "from python",
-					    fn, flags.filename, i, buf);
+					    fn, args.filename, i, buf);
 				}
 			}
 		}
-		printf("\", kwlist");
+		fprintf(args.ostream, "\", kwlist");
 		for (int i = 0; i < n_fnargs; i++) {
 			// emit addresses for the arguments we actually want
-			printf(",\n        ");
+			fprintf(args.ostream, ",\n        ");
 			Symbol arg = fnargs[i];
 
-			if      (is_string(arg.type))  printf("&%s", arg.name);
-			else if (is_voidptr(arg.type)) printf("&%s_ull", arg.name);
-			else if (is_array(arg.type))   printf("&%s_obj", arg.name);
-			else  printf("&%s", arg.name);
+			if      (is_string(arg.type))  fprintf(args.ostream, "&%s", arg.name);
+			else if (is_voidptr(arg.type)) fprintf(args.ostream, "&%s_ull", arg.name);
+			else if (is_array(arg.type))   fprintf(args.ostream, "&%s_obj", arg.name);
+			else  fprintf(args.ostream, "&%s", arg.name);
 
 		}
-		printf(")) return 0;\n\n");
+		fprintf(args.ostream, ")) return 0;\n\n");
 
 		// type checking for any numpy arrays, conversions for any void pointers
 		for (int i = 0; i < n_fnargs; i++)
@@ -962,85 +982,85 @@ emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[],
 			Symbol arg = fnargs[i];
 
 			if (is_voidptr(arg.type)) 
-				printf("    memcpy(&%s, &%s_ull, sizeof(%s));\n", arg.name, arg.name, arg.name);
+				fprintf(args.ostream, "    memcpy(&%s, &%s_ull, sizeof(%s));\n", arg.name, arg.name, arg.name);
 
 			else if (is_array(arg.type)) {
 				char buf[200] = {0};
 				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, basetype(arg.type)));
 
 				// emit array type check
-				printf("    if (%s_obj != Py_None) { \n", arg.name);
-				printf("        if (!PyArray_Check(%s_obj)) { \n", arg.name);
-				printf("            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
-				printf("            return 0; \n");
-				printf("        } \n");
-				printf("        if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
-				printf("            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
-			        printf("            return 0; \n");
-				printf("        } \n");
+				fprintf(args.ostream, "    if (%s_obj != Py_None) { \n", arg.name);
+				fprintf(args.ostream, "        if (!PyArray_Check(%s_obj)) { \n", arg.name);
+				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
+				fprintf(args.ostream, "            return 0; \n");
+				fprintf(args.ostream, "        } \n");
+				fprintf(args.ostream, "        if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
+				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
+			        fprintf(args.ostream, "            return 0; \n");
+				fprintf(args.ostream, "        } \n");
 
 				// emit array contiguity check
-				printf("        if(!PyArray_ISCARRAY((PyArrayObject*)%s_obj)) {\n", arg.name);
-				printf("            PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n", arg.name);
-			        printf("            return 0;\n");
-				printf("        }\n");
-				printf("        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
-				printf("    }\n");
+				fprintf(args.ostream, "        if(!PyArray_ISCARRAY((PyArrayObject*)%s_obj)) {\n", arg.name);
+				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n", arg.name);
+			        fprintf(args.ostream, "            return 0;\n");
+				fprintf(args.ostream, "        }\n");
+				fprintf(args.ostream, "        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
+				fprintf(args.ostream, "    }\n");
 			}
 		}
 
 
 	}	
 	else {
-		printf("    (void) args;\n    (void) kwds;\n");
+		fprintf(args.ostream, "    (void) args;\n    (void) kwds;\n");
 	}
-	printf("\n");
+	fprintf(args.ostream, "\n");
 
 	// now, emit the actual call
 
 	if (is_plainvoid(rtntype)) {
 
-		printf("    Py_BEGIN_ALLOW_THREADS;\n");
-		printf("    ");
-		emit_call(fn, flags, n_fnargs, fnargs);
-		printf("    Py_END_ALLOW_THREADS;\n");
-		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
-		printf("    Py_RETURN_NONE;\n");
+		fprintf(args.ostream, "    Py_BEGIN_ALLOW_THREADS;\n");
+		fprintf(args.ostream, "    ");
+		emit_call(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    Py_RETURN_NONE;\n");
 
 	} else if (is_string(rtntype)) {
 
 		char buf[200] = {0};
 		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
-		printf("    %s rtn = 0;\n", buf);
-		printf("    Py_BEGIN_ALLOW_THREADS;\n");
-		printf("    rtn = ");
-		emit_call(fn, flags, n_fnargs, fnargs);
-		printf("    Py_END_ALLOW_THREADS;\n");
-		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
-		printf("    return Py_BuildValue(\"s\", rtn);\n");
+		fprintf(args.ostream, "    %s rtn = 0;\n", buf);
+		fprintf(args.ostream, "    Py_BEGIN_ALLOW_THREADS;\n");
+		fprintf(args.ostream, "    rtn = ");
+		emit_call(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    return Py_BuildValue(\"s\", rtn);\n");
 
 	} else if (is_voidptr(rtntype)) {
 
 		char buf[200] = {0};
 		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
-		printf("    %s rtn = 0;\n", buf);
-		printf("    Py_BEGIN_ALLOW_THREADS;\n");
-		printf("    rtn = ");
-		emit_call(fn, flags, n_fnargs, fnargs);
-		printf("    Py_END_ALLOW_THREADS;\n");
-		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
-		printf("    return PyLong_FromVoidPtr(rtn);\n");
+		fprintf(args.ostream, "    %s rtn = 0;\n", buf);
+		fprintf(args.ostream, "    Py_BEGIN_ALLOW_THREADS;\n");
+		fprintf(args.ostream, "    rtn = ");
+		emit_call(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    return PyLong_FromVoidPtr(rtn);\n");
 
 	} else if (is_array(rtntype)) {
 
 		char buf[200] = {0};
 		assert(ssizeof(buf) > repr_type(sizeof(buf), buf, rtntype));
 
-		die(0, "Error wrapping function '%s' in file '%s': "
+		die2(args, "Error wrapping function '%s' in file '%s': "
 		       "return type '%s' is not supported by c-serpent",
-		       fn, flags.filename, buf);
+		       fn, args.filename, buf);
 
 	} else {
 		char buf[200] = {0};
@@ -1048,25 +1068,25 @@ emit_wrapper (const char *fn, CSerpentArgs flags, int n_fnargs, Symbol fnargs[],
 
 		// python requires us to handle bools as ints
 		if (rtntype.category == T_BOOL) 
-			printf("    int rtn = 0;\n");
+			fprintf(args.ostream, "    int rtn = 0;\n");
 		else
-			printf("    %s rtn = 0;\n", buf);
+			fprintf(args.ostream, "    %s rtn = 0;\n", buf);
 
-		printf("    Py_BEGIN_ALLOW_THREADS;\n");
-		printf("    rtn = ");
-		emit_call(fn, flags, n_fnargs, fnargs);
-		printf("    Py_END_ALLOW_THREADS;\n");
-		emit_exceptionhandling(fn, flags, n_fnargs, fnargs);
-		printf("    return Py_BuildValue(\"");
-		if(!emit_py_buildvalue_fmt_char(rtntype)) {
-			die(0, "Error wrapping function '%s' in file '%s': "
+		fprintf(args.ostream, "    Py_BEGIN_ALLOW_THREADS;\n");
+		fprintf(args.ostream, "    rtn = ");
+		emit_call(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    Py_END_ALLOW_THREADS;\n");
+		emit_exceptionhandling(fn, args, n_fnargs, fnargs);
+		fprintf(args.ostream, "    return Py_BuildValue(\"");
+		if(!emit_py_buildvalue_fmt_char(args, rtntype)) {
+			die2(args, "Error wrapping function '%s' in file '%s': "
 			       "return type '%s' is not supported by c-serpent",
-			       fn, flags.filename, buf);
+			       fn, args.filename, buf);
 		}
-		printf("\", rtn);\n");
+		fprintf(args.ostream, "\", rtn);\n");
 	}
 
-	printf("}\n\n");
+	fprintf(args.ostream, "}\n\n");
 
 }
 
@@ -1082,6 +1102,8 @@ emit_dispatch_wrapper (
 {
 	// emit a very general wrapper that just dispatches based on the type of the first argument that matches the suffix in all implementations 
 	
+	CSerpentArgs args = p.args;
+
 	int idx_first_covariant_arg = -1;
 	int n_args = 0;
 
@@ -1104,22 +1126,22 @@ emit_dispatch_wrapper (
 
 	Type key_arg = fnargs[idx_first_covariant_arg].type;
 
-	printf("PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
+	fprintf(args.ostream, "PyObject * wrap_%s (PyObject *self, PyObject *args, PyObject *kwds)\n{\n",fn);
 
-	printf("    PyObject *arglist[%i] = {0};\n", n_args);
+	fprintf(args.ostream, "    PyObject *arglist[%i] = {0};\n", n_args);
 
 	// keyword name list
-	printf("    static char *kwlist[] = {");
+	fprintf(args.ostream, "    static char *kwlist[] = {");
 	for(int i = 0; i < n_args; i++)
-		printf("\n        \"%s\",", fnargs[i].name);
-	printf("0};\n");
+		fprintf(args.ostream, "\n        \"%s\",", fnargs[i].name);
+	fprintf(args.ostream, "0};\n");
 
 	// extract args
-	printf("    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"" );
-	for (int i = 0; i < n_args; i++) printf("O");
-	printf("\", kwlist");
-	for (int i = 0; i < n_args; i++) printf(",&arglist[%i]", i);
-	printf(")) return 0;\n");
+	fprintf(args.ostream, "    if(!PyArg_ParseTupleAndKeywords(args, kwds, \"" );
+	for (int i = 0; i < n_args; i++) fprintf(args.ostream, "O");
+	fprintf(args.ostream, "\", kwlist");
+	for (int i = 0; i < n_args; i++) fprintf(args.ostream, ",&arglist[%i]", i);
+	fprintf(args.ostream, ")) return 0;\n");
 
 	// emit dispatch if statements
 	for (int i = 0; i < n_supported_suffixes; i++) {
@@ -1131,11 +1153,11 @@ emit_dispatch_wrapper (
 				char buf[200] = {0};
 				assert(ssizeof(buf) > repr_type(sizeof(buf), buf, basetype(suffixes[i].type)));
 				// array 
-				printf("    if (PyArray_Check(arglist[%i]) && PyArray_TYPE((PyArrayObject*)arglist[%i]) == C2NPY(%s)) {\n", idx_first_covariant_arg, idx_first_covariant_arg, buf);
+				fprintf(args.ostream, "    if (PyArray_Check(arglist[%i]) && PyArray_TYPE((PyArrayObject*)arglist[%i]) == C2NPY(%s)) {\n", idx_first_covariant_arg, idx_first_covariant_arg, buf);
 
-				printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+				fprintf(args.ostream, "        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
 
-				printf("    } else ");
+				fprintf(args.ostream, "    } else ");
 
 			} else {
 
@@ -1143,22 +1165,22 @@ emit_dispatch_wrapper (
 
 				// PyLong
 				if (suffixes[i].type.category >= T_CHAR && suffixes[i].type.category <= T_LLONG) {
-					printf("    if (PyLong_Check(arglist[%i])) {\n", idx_first_covariant_arg);
-					printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
-					printf("    } else ");
+					fprintf(args.ostream, "    if (PyLong_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+					fprintf(args.ostream, "        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+					fprintf(args.ostream, "    } else ");
 				}
 
 				// PyFloat / PyComplex
 				else if (suffixes[i].type.category >= T_FLOAT && suffixes[i].type.category <= T_LDOUBLE) {
 
 					if (suffixes[i].type.is_complex) {
-						printf("    if (PyComplex_Check(arglist[%i])) {\n", idx_first_covariant_arg);
-						printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
-						printf("    } else ");
+						fprintf(args.ostream, "    if (PyComplex_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+						fprintf(args.ostream, "        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+						fprintf(args.ostream, "    } else ");
 					} else {
-						printf("    if (PyFloat_Check(arglist[%i])) {\n", idx_first_covariant_arg);
-						printf("        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
-						printf("    } else ");
+						fprintf(args.ostream, "    if (PyFloat_Check(arglist[%i])) {\n", idx_first_covariant_arg);
+						fprintf(args.ostream, "        return wrap_%s%c(self, args, kwds);\n", fn, suffixes[i].suffix);
+						fprintf(args.ostream, "    } else ");
 					}
 				}
 
@@ -1173,9 +1195,9 @@ emit_dispatch_wrapper (
 		}
 	}
 
-	printf("{\n        PyErr_SetString(PyExc_ValueError, \"No instance of generic function '%s' matches supplied argument types\");\n        return 0;\n    }\n", fn);
+	fprintf(args.ostream, "{\n        PyErr_SetString(PyExc_ValueError, \"No instance of generic function '%s' matches supplied argument types\");\n        return 0;\n    }\n", fn);
 
-	printf("}\n");
+	fprintf(args.ostream, "}\n");
 }
 
 /*
@@ -1330,12 +1352,12 @@ populate_symbols(StorageBuffers *storage, ParseCtx p)
 
 		Symbol s = {0};
 		if (supported_typedef(&p, &s)) {
-			add_symbol(storage, s);
+			add_symbol(p.args, storage, s);
 
 			if(p.args.verbose) {
 				char buf[200] = {0};
 				repr_symbol(sizeof(buf), buf, s);
-				fprintf(stderr, "registered type %s\n", buf); 
+				fprintf(p.args.estream, "registered type %s\n", buf); 
 			}
 
 		} else {
@@ -1524,7 +1546,7 @@ parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_A
 
 
 internal void 
-print_context(char *start, char *loc)
+print_context(CSerpentArgs args, char *start, char *loc)
 {
 	char *first = loc;
 	while(loc-first < 60 && first >= start) 
@@ -1539,8 +1561,8 @@ print_context(char *start, char *loc)
 		last++;
 
 	while(first != last) {
-		if (first == loc) fprintf(stderr, " HERE>>>");
-		putc(*(first++),stderr);
+		if (first == loc) fprintf(args.estream, " HERE>>>");
+		putc(*(first++),args.estream);
 	}
 }
 
@@ -1551,39 +1573,39 @@ enum delim_stack_action {
 };
 
 internal long 
-delim_stack(StorageBuffers *storage, enum delim_stack_action action, Token value, char *start, char* loc) {
+delim_stack(CSerpentArgs args, StorageBuffers *storage, enum delim_stack_action action, Token value, char *start, char* loc) {
 	switch(action) {
 	case DS_PUSH:
 		if(storage->delimstack_pos == COUNT_ARRAY(storage->delimstack)) 
-			die(0, "congratulations, your file blew the delimiter stack");
+			die2(args, "congratulations, your file blew the delimiter stack");
 
 		storage->delimstack_locations[storage->delimstack_pos] = loc;
 		storage->delimstack[storage->delimstack_pos++] = value.toktype;
 		return -1;
 	case DS_POP:
 		if(storage->delimstack_pos == 0) {
-			fprintf(stderr, 
+			fprintf(args.estream, 
 				"mismatched delimiters (extraneous %c)\n\ncontext:\n", 
 				(char)value.toktype);
 
-			print_context(start, loc);
-			fputc('\n', stderr);
-			exit(EXIT_FAILURE);
+			print_context(args, start, loc);
+			fputc('\n', args.estream);
+			terminate(&args);
 		}
 		switch(value.toktype)
 		{
 		case '}':
 			if ('{' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(stderr, 
+				fprintf(args.estream, 
 					"mismatched delimiters (got '}' to match '%c')\n\n", 
 					storage->delimstack[storage->delimstack_pos]);
 
 				goto mismatch_close;
 			}
-			return delim_stack(storage, DS_QUERY, value, start, loc);
+			return delim_stack(args, storage, DS_QUERY, value, start, loc);
 		case ')':
 			if ('(' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(stderr, 
+				fprintf(args.estream, 
 					"mismatched delimiters (got ')' to match '%c')\n\n", 
 					storage->delimstack[storage->delimstack_pos]);
 
@@ -1592,7 +1614,7 @@ delim_stack(StorageBuffers *storage, enum delim_stack_action action, Token value
 			break;
 		case ']':
 			if ('[' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(stderr, 
+				fprintf(args.estream, 
 					"mismatched delimiters (got ']' to match '%c')\n\n",
 				       	storage->delimstack[storage->delimstack_pos]);
 
@@ -1613,30 +1635,30 @@ delim_stack(StorageBuffers *storage, enum delim_stack_action action, Token value
 	return -1;	
 
 mismatch_close:
-	fprintf(stderr, "opening delimiter context:\n\n");
-	print_context(start, storage->delimstack_locations[storage->delimstack_pos]);
-	fprintf(stderr, "\n\ninvalid closing delimiter context:\n\n");
-	print_context(start, loc);
-	fputc('\n', stderr);
-	exit(EXIT_FAILURE);
+	fprintf(args.estream, "opening delimiter context:\n\n");
+	print_context(args, start, storage->delimstack_locations[storage->delimstack_pos]);
+	fprintf(args.estream, "\n\ninvalid closing delimiter context:\n\n");
+	print_context(args, start, loc);
+	fputc('\n', args.estream);
+	terminate(&args);
 }
 
 internal void 
-delim_push(StorageBuffers *storage, Token value, char *start, char* loc) 
+delim_push(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
 { 
-	(void)delim_stack(storage, DS_PUSH, value, start, loc); 
+	(void)delim_stack(args, storage, DS_PUSH, value, start, loc); 
 }
 
 internal int  
-delim_pop(StorageBuffers *storage, Token value, char *start, char* loc) 
+delim_pop(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
 { 
-	return delim_stack(storage, DS_POP, value, start, loc); 
+	return delim_stack(args, storage, DS_POP, value, start, loc); 
 }
 
 internal int  
-toplevel(StorageBuffers *storage) 
+toplevel(CSerpentArgs args, StorageBuffers *storage) 
 { 
-	return delim_stack(storage, DS_QUERY, (Token){0}, 0, 0); 
+	return delim_stack(args, storage, DS_QUERY, (Token){0}, 0, 0); 
 }
 
 
@@ -1665,7 +1687,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 			char path[4096] = {0};
 			// TODO accomodate windows
 			if(ssizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
-				die(0, "internal buffer overflow (path too long)");
+				die2(args, "internal buffer overflow (path too long)");
 			f = fopen(path, "rb");
 			if(f) break;
 		}
@@ -1675,14 +1697,14 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 			char path[4096] = {0};
 			// TODO accomodate windows
 			if(ssizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
-				die(0, "internal buffer overflow (path too long)");
+				die2(args, "internal buffer overflow (path too long)");
 			f = fopen(path, "rb");
 		}
 
-		if(!f) die(0, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
+		if(!f) die2(args, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
 
 		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die(0,"input file too long");
+		if(len == text_bufsz) die2(args,"input file too long");
 		text += len;
 		text_bufsz -= len;
 
@@ -1697,9 +1719,9 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 
 		// read the usual way
 		FILE *f = fopen(args.filename, "rb");
-		if(!f) die(0, "couldn't fopen '%s'", args.filename);
+		if(!f) die2(args, "couldn't fopen '%s'", args.filename);
 		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die(0,"input file too long");
+		if(len == text_bufsz) die2(args,"input file too long");
 		fclose(f);
 
 	} else {
@@ -1707,17 +1729,17 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		// read via popen to preprocessor command
 		char cmd[4096] = {0};
 		if(ssizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
-			die(0, "internal buffer overflow");
+			die2(args, "internal buffer overflow");
 		
 		FILE *f = popen(cmd, "r");
-		if(!f) die(0, "couldn't popen '%s'", cmd);
+		if(!f) die2(args, "couldn't popen '%s'", cmd);
 		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die(0,"input file too long");
+		if(len == text_bufsz) die2(args,"input file too long");
 		int exit_status = pclose(f);
 		switch (exit_status) {
 			case  0: break;
-			case -1: die(0, "wait4 on '%s' failed, or other internal error occurred", cmd);
-			default: die(0, "'%s' failed with code %i", cmd, exit_status);
+			case -1: die2(args, "wait4 on '%s' failed, or other internal error occurred", cmd);
+			default: die2(args, "'%s' failed with code %i", cmd, exit_status);
 		}
 	}
 	
@@ -1730,7 +1752,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 	stb_lexer lex = {0};
 	stb_c_lexer_init(&lex, text_start, text+strlen(text_start), (char *) string_store, string_store_bufsz);
 	while(stb_c_lexer_get_token(&lex)) {
-		if(tokens_maxnum == ntok) die(0, "internal buffer overflow");
+		if(tokens_maxnum == ntok) die2(args, "internal buffer overflow");
 
 		Token t = {.toktype = lex.token};
 		switch(lex.token)
@@ -1742,7 +1764,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 			case CLEX_dqstring:
 			case CLEX_sqstring: 		
 				t.string_len = strlen(lex.string);	
-				t.string = intern_string(st, lex.string, t.string_len);
+				t.string = intern_string(args, st, lex.string, t.string_len);
 				break;
 			case CLEX_charlit:
 				t.int_number = lex.int_number;
@@ -1780,7 +1802,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 				if (!(lex.token >= 0 && lex.token < 256)) {
 					stb_lex_location loc = {0};
 					stb_c_lexer_get_location(&lex, lex.where_firstchar, &loc);
-					die(0,"Lex error at line %i, character %i: unknown token %ld", loc.line_number, loc.line_offset, lex.token);
+					die2(args,"Lex error at line %i, character %i: unknown token %ld", loc.line_number, loc.line_offset, lex.token);
 				}
 				break;
 		}		
@@ -1789,15 +1811,15 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		// when scanning braced code, check that delimiters match, but that's it. 
 
 		if(t.toktype == '{' || t.toktype == '(' || t.toktype == '[') {
-			delim_push(st, t, text_start, lex.where_firstchar);
+			delim_push(args, st, t, text_start, lex.where_firstchar);
 		} else if(t.toktype == '}' || t.toktype == ')' || t.toktype == ']') {
-			if(delim_pop(st, t, text_start, lex.where_firstchar)) {
+			if(delim_pop(args, st, t, text_start, lex.where_firstchar)) {
 				tokens[ntok++] = (Token){.toktype=';'};
 				continue;
 			}
 		}
 
-		if(toplevel(st)) {
+		if(toplevel(args, st)) {
 			tokens[ntok++] = t;
 		} 
 	}
@@ -1964,7 +1986,7 @@ usage(void)
 
 
 int 
-cserpent_main (char *argv[])
+cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 {
 	/*
 		Allocate buffers
@@ -1975,12 +1997,17 @@ cserpent_main (char *argv[])
 	Token *tokens       = calloc(1, (1<<27) * sizeof(*tokens));
 	StorageBuffers *storage = calloc(1, sizeof(*storage)); 
 
+	CSerpentArgs args = {
+			.preprocessor = "cc -E", 
+			.ostream=out_stream, 
+			.estream=err_stream, 
+		};
+
 	if(!(text && string_store && tokens && storage)) 
-		die(0,"out of mem");
+		die2(args,"out of mem");
 
 	int emitted_preamble = 0;
 
-	CSerpentArgs args = {.preprocessor = "cc -E"};
 	if (getenv("CSERPENT_PP")) 
 		args.preprocessor = getenv("CSERPENT_PP");
 
@@ -1993,7 +2020,7 @@ cserpent_main (char *argv[])
 	while (*argv) {
 		if (!strcmp(*argv, "-h")) {
 			usage();
-			exit(EXIT_SUCCESS);
+			return 0;
 		}
 
 		if (!strcmp(*argv, "-v")) {
@@ -2029,11 +2056,11 @@ cserpent_main (char *argv[])
 		if (!strcmp(*argv, "-I")) { 
 			argv++;
 			if(*argv && **argv != '-') {
-				if(args.ndirs == COUNT_ARRAY(args.dirs)) die(0, "A maximum of %i -I flags can be used in a single c-serpent invocation.", (int)COUNT_ARRAY(args.dirs));
+				if(args.ndirs == COUNT_ARRAY(args.dirs)) die2(args, "A maximum of %i -I flags can be used in a single c-serpent invocation.", (int)COUNT_ARRAY(args.dirs));
 				args.dirs[args.ndirs++] = *argv;
 				argv++;
 			} else {
-				die(0, "-I flag must be followed by a directory (to be searched for files manually included with -i)");
+				die2(args, "-I flag must be followed by a directory (to be searched for files manually included with -i)");
 			}
 			continue;
 		}
@@ -2041,11 +2068,11 @@ cserpent_main (char *argv[])
 		if (!strcmp(*argv, "-i")) { 
 			argv++;
 			if(*argv && **argv != '-') {
-				if(args.manual_include.nfiles == COUNT_ARRAY(args.manual_include.files)) die(0, "A maximum of %i -i flags can be used per file to be processed.", (int)COUNT_ARRAY(args.manual_include.files));
+				if(args.manual_include.nfiles == COUNT_ARRAY(args.manual_include.files)) die2(args, "A maximum of %i -i flags can be used per file to be processed.", (int)COUNT_ARRAY(args.manual_include.files));
 				args.manual_include.files[args.manual_include.nfiles++] = *argv;
 				argv++;
 			} else {
-				die(0, "-i flag must be followed by a file path (to be manually included when processing the next file)");
+				die2(args, "-i flag must be followed by a file path (to be manually included when processing the next file)");
 			}
 			continue;
 		}
@@ -2056,7 +2083,7 @@ cserpent_main (char *argv[])
 				args.modulename = *argv;
 				argv++;
 			} else {
-				die(0, "-m flag must be followed by a valid name (for the generated python module)");
+				die2(args, "-m flag must be followed by a valid name (for the generated python module)");
 			}
 			continue;
 		}
@@ -2066,10 +2093,10 @@ cserpent_main (char *argv[])
 			if(*argv && **argv != '-') {
 				fnames[n_fnames++] = *argv;
 				if(n_fnames == COUNT_ARRAY(fnames)) 
-					die(0, "error: c-serpent only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
+					die2(args, "error: c-serpent only supports wrapping up to  %i functions", (int) COUNT_ARRAY(fnames));
 				argv++;
 			} else {
-				die(0, "-x flag must be followed by a function name");
+				die2(args, "-x flag must be followed by a function name");
 			}
 			continue;
 		}
@@ -2081,7 +2108,7 @@ cserpent_main (char *argv[])
 				args.preprocessor = *argv;
 				argv++;
 			} else {
-				die(0, "-p flag must be followed by a program (to serve as preprocessor)");
+				die2(args, "-p flag must be followed by a program (to serve as preprocessor)");
 			}
 			continue;
 		}
@@ -2093,10 +2120,10 @@ cserpent_main (char *argv[])
 					.name = *argv,
 					.type = {.category = T_VOID},
 				};
-				(void)add_symbol(storage, newtype);	
+				(void)add_symbol(args, storage, newtype);	
 				argv++;
 			} else {
-				die(0, "-t flag must be followed by a type name");
+				die2(args, "-t flag must be followed by a type name");
 			}
 			continue;
 		}
@@ -2129,7 +2156,7 @@ cserpent_main (char *argv[])
 				memset(&args.manual_include, 0, sizeof(args.manual_include));
 				argv++;
 			} else {
-				die(0, "-f flag must be followed by a filename");
+				die2(args, "-f flag must be followed by a filename");
 			}
 			continue;
 		}
@@ -2137,9 +2164,9 @@ cserpent_main (char *argv[])
 		if (!strncmp(*argv, "-e,", 3)) {
 			char *c = *argv+3;
 			int nchars_read = 0;
-			int argno = xatoi(c, &nchars_read);
+			int argno = xatoi(args, c, &nchars_read);
 			c += nchars_read+1;
-			if(c[-1] != ',') die(0,"expected comma in argument '%s'", *argv);
+			if(c[-1] != ',') die2(args,"expected comma in argument '%s'", *argv);
 			args.error_handling.active = 1;
 			args.error_handling.argno = argno;
 			args.error_handling.fn = c;
@@ -2156,9 +2183,9 @@ cserpent_main (char *argv[])
 		}
 
 		if (**argv == '-') {
-			fprintf(stderr, "unrecognized flag: '%s'\n\n", *argv);
+			fprintf(args.estream, "unrecognized flag: '%s'\n\n", *argv);
 			usage();
-			exit(EXIT_FAILURE);
+			return 1;
 		}
 
 		/*
@@ -2167,7 +2194,7 @@ cserpent_main (char *argv[])
 
 		fnames[n_fnames++] = *argv;
 		if(n_fnames == COUNT_ARRAY(fnames)) 
-			die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
+			die2(args, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
 
 		ParseCtx p = {
 			.tokens_first  =  tokens,
@@ -2193,15 +2220,15 @@ cserpent_main (char *argv[])
 					the first version that appears.
 				*/
 
-				{get_symbol_or_die(storage, "int64_t")->type, 'l'},
-				{get_symbol_or_die(storage, "int32_t")->type, 'i'},
-				{get_symbol_or_die(storage, "int16_t")->type, 's'},
-				{get_symbol_or_die(storage, "int8_t")->type,  'b'},
+				{get_symbol_or_die(args, storage, "int64_t")->type, 'l'},
+				{get_symbol_or_die(args, storage, "int32_t")->type, 'i'},
+				{get_symbol_or_die(args, storage, "int16_t")->type, 's'},
+				{get_symbol_or_die(args, storage, "int8_t")->type,  'b'},
 
-				{get_symbol_or_die(storage, "uint64_t")->type, 'L'},
-				{get_symbol_or_die(storage, "uint32_t")->type, 'I'},
-				{get_symbol_or_die(storage, "uint16_t")->type, 'S'},
-				{get_symbol_or_die(storage, "uint8_t")->type,  'B'},
+				{get_symbol_or_die(args, storage, "uint64_t")->type, 'L'},
+				{get_symbol_or_die(args, storage, "uint32_t")->type, 'I'},
+				{get_symbol_or_die(args, storage, "uint16_t")->type, 'S'},
+				{get_symbol_or_die(args, storage, "uint8_t")->type,  'B'},
 
 				{(Type){.category=T_DOUBLE}, 'd'},
 				{(Type){.category=T_FLOAT},  'f'},
@@ -2220,9 +2247,9 @@ cserpent_main (char *argv[])
 
 				if (parse_file(p, namebuf, argsyms)) {
 
-					fnames[n_fnames++] = intern_string(storage, namebuf, 0) ;
+					fnames[n_fnames++] = intern_string(args, storage, namebuf, 0) ;
 					if(n_fnames == COUNT_ARRAY(fnames)) 
-						die(0, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
+						die2(args, "error: c-serpent only supports wrapping up to  %i functions (including generic variants)", (int) COUNT_ARRAY(fnames));
 
 					variant_suffixes[i].found = 1;
 					n_variants_found++;
@@ -2234,7 +2261,7 @@ cserpent_main (char *argv[])
 			}
 
 			if (n_variants_found == 0) 
-				die(0, "didn't find any variants of a function called '%s' in file '%s' that followed the required suffix convention", *argv, p.args.filename);
+				die2(args, "didn't find any variants of a function called '%s' in file '%s' that followed the required suffix convention", *argv, p.args.filename);
 
 			emit_dispatch_wrapper(p, *argv, n_variants_found, arg_match_count, COUNT_ARRAY(variant_suffixes), variant_suffixes, argsyms);
 
@@ -2242,13 +2269,19 @@ cserpent_main (char *argv[])
 		} else {
 
 			if(!parse_file(p, *argv, argsyms)) 
-				die(0, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
+				die2(args, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
 		}
 
 		argv++;
 	}
 
 	emit_module(args, n_fnames, fnames, fname_needs_remove_underscore);
+
+	free(text);
+	free(string_store);
+	free(tokens);
+	free(storage);
+
 	return 0;
 }
 
@@ -2257,6 +2290,9 @@ main (int argc, char *argv[])
 {
 	(void)argc;
 	argv++;
-	if(!*argv) usage();
-	else return cserpent_main(argv);
+	if(!*argv || cserpent_main(argv, stdout, stderr)) {
+		usage(); 
+		exit(EXIT_FAILURE);
+	}
+	return 0;
 }
