@@ -118,6 +118,7 @@ typedef struct
 	FILE *ostream;
 	FILE *estream;
 
+	FILE *volatile * open_file;
 	jmp_buf *jmp;
 
 } CSerpentArgs;
@@ -1705,12 +1706,15 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 
 		if(!f) die2(args, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
 
+		*args.open_file = f;
+
 		long long len = fread(text, 1, text_bufsz, f);
 		if(len == text_bufsz) die2(args,"input file too long");
 		text += len;
 		text_bufsz -= len;
 
 		fclose(f);
+		*args.open_file = 0;
 	}
 
 	/*
@@ -1722,9 +1726,11 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		// read the usual way
 		FILE *f = fopen(args.filename, "rb");
 		if(!f) die2(args, "couldn't fopen '%s'", args.filename);
+		*args.open_file = f;
 		long long len = fread(text, 1, text_bufsz, f);
 		if(len == text_bufsz) die2(args,"input file too long");
 		fclose(f);
+		*args.open_file = 0;
 
 	} else {
 
@@ -1735,9 +1741,11 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		
 		FILE *f = popen(cmd, "r");
 		if(!f) die2(args, "couldn't popen '%s'", cmd);
+		*args.open_file = f;
 		long long len = fread(text, 1, text_bufsz, f);
 		if(len == text_bufsz) die2(args,"input file too long");
 		int exit_status = pclose(f);
+		*args.open_file = 0;
 		switch (exit_status) {
 			case  0: break;
 			case -1: die2(args, "wait4 on '%s' failed, or other internal error occurred", cmd);
@@ -2002,6 +2010,7 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 	// so we need preserve the pointers on the stack that we need to free later on
 	jmp_buf jmp;
 	volatile struct {
+		FILE *open_file;
 		int success;
 		void *ptrs[4];
 	} _resources = { 
@@ -2022,6 +2031,7 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 			.ostream=out_stream, 
 			.estream=err_stream, 
 			.jmp = &jmp,
+			.open_file = &_resources.open_file,
 		};
 
 	if(!(text && string_store && tokens && storage)) 
@@ -2301,6 +2311,7 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 	cleanup: // free memory
 	for(unsigned i = 0; i < sizeof(_resources.ptrs)/sizeof(_resources.ptrs[0]); i++) 
 		free(_resources.ptrs[i]);
+	if(_resources.open_file) fclose(_resources.open_file);
 	return ! _resources.success; // rtn zero on success
 }
 
