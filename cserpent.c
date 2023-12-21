@@ -118,6 +118,8 @@ typedef struct
 	FILE *ostream;
 	FILE *estream;
 
+	jmp_buf *jmp;
+
 } CSerpentArgs;
 
 enum { 
@@ -285,7 +287,7 @@ dump_context(FILE *f, ParseCtx *p)
 internal _Noreturn void
 terminate(CSerpentArgs *args) {
 	(void) args;
-	exit(EXIT_FAILURE);
+	longjmp(*args->jmp, 1);
 }
 
 internal _Noreturn void
@@ -1988,19 +1990,38 @@ usage(void)
 int 
 cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 {
-	/*
-		Allocate buffers
-	*/
+	
+	// allocate all the memory we need up front
 	
 	char  *text         = calloc(1, 1<<27);
 	char  *string_store = calloc(1, 0x10000);
 	Token *tokens       = calloc(1, (1<<27) * sizeof(*tokens));
 	StorageBuffers *storage = calloc(1, sizeof(*storage)); 
 
+	// to facilitate returning from errors deep in the call stack we will use setjmp/longjmp
+	// so we need preserve the pointers on the stack that we need to free later on
+	jmp_buf jmp;
+	volatile struct {
+		int success;
+		void *ptrs[4];
+	} _resources = { 
+		.success = 1,
+		.ptrs = {text, string_store, tokens, storage},
+	};
+
+	if(setjmp(jmp)) {
+		// we land here if longjmp is called
+		_resources.success = 0;
+		goto cleanup;
+	}
+
+	// function begins in earnest
+
 	CSerpentArgs args = {
 			.preprocessor = "cc -E", 
 			.ostream=out_stream, 
 			.estream=err_stream, 
+			.jmp = &jmp,
 		};
 
 	if(!(text && string_store && tokens && storage)) 
@@ -2277,12 +2298,10 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 
 	emit_module(args, n_fnames, fnames, fname_needs_remove_underscore);
 
-	free(text);
-	free(string_store);
-	free(tokens);
-	free(storage);
-
-	return 0;
+	cleanup: // free memory
+	for(unsigned i = 0; i < sizeof(_resources.ptrs)/sizeof(_resources.ptrs[0]); i++) 
+		free(_resources.ptrs[i]);
+	return ! _resources.success; // rtn zero on success
 }
 
 int 
@@ -2290,9 +2309,9 @@ main (int argc, char *argv[])
 {
 	(void)argc;
 	argv++;
-	if(!*argv || cserpent_main(argv, stdout, stderr)) {
+	if(!*argv) {
 		usage(); 
 		exit(EXIT_FAILURE);
 	}
-	return 0;
+	return cserpent_main(argv, stdout, stderr);
 }
