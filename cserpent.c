@@ -1664,6 +1664,41 @@ toplevel(CSerpentArgs args, StorageBuffers *storage)
 	return delim_stack(args, storage, DS_QUERY, (Token){0}, 0, 0); 
 }
 
+internal void
+ingest_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+{
+	if(!args.preprocessor || args.disable_pp) {
+
+		// read the usual way
+		FILE *f = fopen(args.filename, "rb");
+		if(!f) die2(args, "couldn't fopen '%s'", args.filename);
+		*args.open_file = f;
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die2(args, "input file too long");
+		fclose(f);
+		*args.open_file = 0;
+
+	} else {
+
+		// read via popen to preprocessor command
+		char cmd[4096] = {0};
+		if(ssizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
+			die2(args, "internal buffer overflow");
+		
+		FILE *f = popen(cmd, "r");
+		if(!f) die2(args, "couldn't popen '%s'", cmd);
+		*args.open_file = f;
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die2(args, "input file too long");
+		int exit_status = pclose(f);
+		*args.open_file = 0;
+		switch (exit_status) {
+			case  0: break;
+			case -1: die2(args, "wait4 on '%s' failed, or other internal error occurred", cmd);
+			default: die2(args, "'%s' failed with code %i", cmd, exit_status);
+		}
+	}
+}
 
 internal int 
 lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
@@ -1721,37 +1756,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		Read input file
 	*/
 
-	if(!args.preprocessor || args.disable_pp) {
-
-		// read the usual way
-		FILE *f = fopen(args.filename, "rb");
-		if(!f) die2(args, "couldn't fopen '%s'", args.filename);
-		*args.open_file = f;
-		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die2(args,"input file too long");
-		fclose(f);
-		*args.open_file = 0;
-
-	} else {
-
-		// read via popen to preprocessor command
-		char cmd[4096] = {0};
-		if(ssizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
-			die2(args, "internal buffer overflow");
-		
-		FILE *f = popen(cmd, "r");
-		if(!f) die2(args, "couldn't popen '%s'", cmd);
-		*args.open_file = f;
-		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die2(args,"input file too long");
-		int exit_status = pclose(f);
-		*args.open_file = 0;
-		switch (exit_status) {
-			case  0: break;
-			case -1: die2(args, "wait4 on '%s' failed, or other internal error occurred", cmd);
-			default: die2(args, "'%s' failed with code %i", cmd, exit_status);
-		}
-	}
+	ingest_file(st, args, tokens_maxnum, tokens, text_bufsz, text_start, string_store_bufsz, string_store);
 	
 	/*
 		Lex whole file
@@ -1886,7 +1891,7 @@ usage(void)
 	"-v   verbose (prints a list of typedefs that were parsed, for debugging).  \n"
 	"                                                                               \n"
 	"-D   disable including declarations for the functions to be wrapped in the   \n"
-	"     generated wrapper file this might be used to facilitate amalgamation   \n"
+	"     generated wrapper file. This might be used to facilitate amalgamation   \n"
 	"     builds, for example.  \n"
 	"                                                                                                                                                           \n"
 	"-x   if you have some extra handwritten wrappers, you can use '-x whatever'    \n"
@@ -2167,7 +2172,9 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 				emitted_preamble = 1;
 			}
 
-			if(*argv && **argv != '-') {
+			// we're expecting a filename to follow, or '-' to indicate stdin, but not another flag yet
+			if(*argv && (!strcmp(*argv, "-")) || **argv != '-') {
+
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
 				ntok = lex_file(storage, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
@@ -2315,6 +2322,7 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 	return ! _resources.success; // rtn zero on success
 }
 
+#ifndef CSERPENT_SUPPRESS_MAIN
 int 
 main (int argc, char *argv[])
 {
@@ -2326,3 +2334,4 @@ main (int argc, char *argv[])
 	}
 	return cserpent_main(argv, stdout, stderr);
 }
+#endif
