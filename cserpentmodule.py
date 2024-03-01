@@ -5,24 +5,34 @@ notebook. It's also nice to be able to hot-reload the resulting module.
 This module gives you a way to do that. You can write C code in a string,
 compile it, wrap it with C-Serpent, and load it as a Python module.
 
-Unfortunately, as I don't think MSVC's cl has a preproces flag that writes 
-to stdout, this will probably only work with gcc or clang.
+Unfortunately, as I don't think MSVC's cl has a preprocess flag that writes 
+to stdout, this will probably only work with gcc or clang. MSVC probably
+needs to be treated as a special case in the future.
 '''
 
 import os, sys, time, subprocess, importlib
 import cserpent, numpy
 from distutils.sysconfig import get_python_inc
 
+compiler_config_gcc_clang = {
+        'preprocessor': 'cc -E -',
+        'preprocessor_include_flag': '-I',
+        'compiler': 'cc',
+        'include_flag': '-I',
+        'linkdir_flag': '-L',
+        'rpath_flag': '-Wl,--disable-new-dtags,-rpath,',
+        'output_flag': '-o ',
+        'default_ccflags': [
+                "-Wall", "-Wno-unused-function", 
+                "-shared", "-fPIC", 
+                "-x", "c", "-"] 
+}
+
 class CSerpentModule:
         def __init__(self, 
                         module_name, 
                         working_dir='/tmp', 
-                        preprocessor='cc -E -',
-                        preprocessor_include_flag='-I',
-                        compiler='cc', 
-                        compiler_include_flag='-I',
-                        compiler_linkdir_flag='-L',
-                        compiler_rpath_flag='-Wl,--disable-new-dtags,-rpath,', # can set to None if not needed
+                        compiler_config=compiler_config_gcc_clang,
                         ):
 
                 if working_dir is None:
@@ -32,12 +42,8 @@ class CSerpentModule:
 
                 self.modname = module_name
                 self.working_dir = working_dir
-                self.preprocessor = preprocessor
-                self.preprocessor_include_flag = preprocessor_include_flag
-                self.compiler = compiler
-                self.compiler_include_flag = compiler_include_flag
-                self.compiler_linkdir_flag = compiler_linkdir_flag
-                self.compiler_rpath_flag = compiler_rpath_flag
+                self.compiler_config = compiler_config
+                self.last_opath = None
         
         def compile(self, c_code, functions, 
                         ccflags=["-O3", "-fopenmp"], 
@@ -46,19 +52,19 @@ class CSerpentModule:
                         linkflags=[],
                         ):
                 
-                if 'CSERPENT_INCLUDE_DIRS' in os.environ:
-                        includedirs += os.environ['CSERPENT_INCLUDE_DIRS'].split()
-                if 'CSERPENT_CCFLAGS' in os.environ:
-                        ccflags += os.environ['CSERPENT_CCFLAGS'].split()
-                if 'CSERPENT_LINKDIRS' in os.environ:
-                        linkdirs += os.environ['CSERPENT_LINKDIRS'].split()
-                if 'CSERPENT_LINKFLAGS' in os.environ:
-                        linkflags += os.environ['CSERPENT_LINKFLAGS'].split()
+                if 'CSERPENT_EXTRA_INCLUDE_DIRS' in os.environ:
+                        includedirs += os.environ['CSERPENT_EXTRA_INCLUDE_DIRS'].split()
+                if 'CSERPENT_EXTRA_CCFLAGS' in os.environ:
+                        ccflags += os.environ['CSERPENT_EXTRA_CCFLAGS'].split()
+                if 'CSERPENT_EXTRA_LINKDIRS' in os.environ:
+                        linkdirs += os.environ['CSERPENT_EXTRA_LINKDIRS'].split()
+                if 'CSERPENT_EXTRA_LINKFLAGS' in os.environ:
+                        linkflags += os.environ['CSERPENT_EXTRA_LINKFLAGS'].split()
                 
                 includedirs += [get_python_inc(), numpy.get_include()]
 
-                preprocessor_cmd = self.preprocessor.split()
-                preprocessor_cmd += [self.preprocessor_include_flag + d for d in includedirs]
+                preprocessor_cmd = self.compiler_config['preprocessor'].split()
+                preprocessor_cmd += [self.compiler_config['preprocessor_include_flag'] + d for d in includedirs]
 
                 preprocessor_result = subprocess.run(
                         preprocessor_cmd, 
@@ -88,18 +94,18 @@ class CSerpentModule:
                 full_code = cserpent_stdout + "\n" + preprocessed_code
 
                 opath=os.path.join(self.working_dir, python_mod_name + ".so")
-                compiler_command = self.compiler.split()
-                compiler_command += [self.compiler_include_flag + d for d in includedirs]
-                compiler_command += [
-                        "-Wall", "-Wno-unused-function", 
-                        "-shared", "-fPIC", 
-                        "-x", "c", "-", 
-                        "-o", opath]
+                compiler_command = self.compiler_config['compiler'].split()
+                compiler_command += [self.compiler_config['include_flag'] + d for d in includedirs]
+                compiler_command += self.compiler_config['default_ccflags']
+                compiler_command += (self.compiler_config['output_flag'] + opath).split()
                 compiler_command += ccflags
-                compiler_command += [self.compiler_linkdir_flag + d for d in linkdirs]
-                if self.compiler_rpath_flag is not None:
-                        compiler_command += [self.compiler_rpath_flag + d for d in linkdirs]
+                compiler_command += [self.compiler_config['linkdir_flag'] + d for d in linkdirs]
+                if self.compiler_config['rpath_flag'] is not None:
+                        compiler_command += [self.compiler_config['rpath_flag'] + d for d in linkdirs]
                 compiler_command += linkflags
+
+                print("Running compiler:")
+                print(" ".join(compiler_command))
 
                 compiler_result = subprocess.run(
                         compiler_command, 
@@ -112,6 +118,8 @@ class CSerpentModule:
                         return None
 
                 sys.modules[self.modname] = importlib.import_module(python_mod_name)
+                if self.last_opath: os.remove(self.last_opath)
+                self.last_opath = opath
 
                 print("Build successful!")
                 return sys.modules[self.modname]
