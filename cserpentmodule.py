@@ -49,7 +49,7 @@ import os, sys, time, subprocess, importlib
 import cserpent, numpy
 from distutils.sysconfig import get_python_inc
 
-compiler_config_gcc_clang = {
+compiler_config_gcc = {
         'preprocessor': 'cc -E -', # note the dash: read from stdin
         'preprocessor_include_flag': '-I',
         'compiler': 'cc',
@@ -67,7 +67,7 @@ class CSerpentModule:
         def __init__(self, 
                         module_name, 
                         working_dir='/tmp', 
-                        compiler_config=compiler_config_gcc_clang,
+                        compiler_config=compiler_config_gcc,
                         ):
 
                 if working_dir is None:
