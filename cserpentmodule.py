@@ -50,7 +50,7 @@ PREREQUISITES
 '''
 
 import os, sys, time, subprocess, importlib
-import cserpent, numpy
+import cserpent_py, numpy
 from distutils.sysconfig import get_python_inc
 
 # This is the default configuration for gcc.
@@ -132,7 +132,7 @@ class CSerpentModule:
 
                 cserpent_args = ["-m", python_mod_name, "-D", "-f", "-"] + extra_cserpent_flags + functions
                 cserpent_rtncode, cserpent_stdout, cserpent_stderr = \
-                        cserpent.cserpent(cserpent_args, preprocessed_code)
+                        cserpent_py.run_cserpent(cserpent_args, preprocessed_code)
                 
                 if cserpent_rtncode != 0:
                         print("Error from C-Serpent:")

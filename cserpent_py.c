@@ -9,7 +9,7 @@
 //
 // You can probably build this with:
 //   PY_INC_DIR="$(python -c "import distutils.sysconfig; print(distutils.sysconfig.get_python_inc())")"
-//   cc -shared -fPIC -o cserpent.so cserpent_py.c -I$PY_INC_DIR
+//   cc -shared -fPIC -o cserpent_py.so cserpent_py.c -I$PY_INC_DIR
 //
 // You'll need the python headers, perhaps from python3-dev or python3-devel
 // if you're on a debian or redhat based system, respectively.
@@ -83,19 +83,19 @@ wrap_cserpent_main_buffers(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef module_methods[] = {
-	{"cserpent", wrap_cserpent_main_buffers, METH_VARARGS, "Wrap cserpent_main_buffers"},
+	{"run_cserpent", wrap_cserpent_main_buffers, METH_VARARGS, "Runs C-serpent"},
 	{NULL, NULL, 0, NULL}
 };
 
 static struct PyModuleDef moduledef = {
 	PyModuleDef_HEAD_INIT,
-	"cserpent",
+	"cserpent_py",
 	NULL,
 	-1,
 	module_methods
 };
 
-PyMODINIT_FUNC PyInit_cserpent(void) {
+PyMODINIT_FUNC PyInit_cserpent_py(void) {
 	return PyModule_Create(&moduledef);
 }
 
