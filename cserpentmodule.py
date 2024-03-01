@@ -1,6 +1,6 @@
 '''
-It's sometimes nice, especially when developing with Jupyter notebooks,
-to be able to compile C code into a Python module without leaving the
+When developing with Jupyter notebooks, it is nice to be able to 
+compile C code into a Python module on the fly, without leaving the
 notebook. It's also nice to be able to hot-reload the resulting module.
 This module gives you a way to do that. You can write C code in a string,
 compile it, wrap it with C-Serpent, and load it as a Python module.
