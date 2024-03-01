@@ -8,6 +8,41 @@ compile it, wrap it with C-Serpent, and load it as a Python module.
 Unfortunately, as I don't think MSVC's cl has a preprocess flag that writes 
 to stdout, this will probably only work with gcc or clang. MSVC probably
 needs to be treated as a special case in the future.
+
+
+EXAMPLE USAGE
+
+        m = CSerpentModule('my_module')
+        c_code = """
+                #include <stdint.h>
+
+                int64_t add_i64(int64_t a, int64_t b) {
+                        return a + b;
+                }
+        """
+
+        m.compile(c_code, ['add_i64'])
+        import my_module
+        my_module.add_i64(3, 4) # returns 7
+
+        # Now, if you change the C code and recompile, the module will be reloaded
+        c_code = """
+                #include <stdint.h>
+
+                int64_t add_i64(int64_t a, int64_t b) {
+                        return a + b + 1;
+                }
+        """
+
+        m.compile(c_code, ['add_i64'])
+        import my_module
+        my_module.add_i64(3, 4) # returns 8
+
+PREREQUISITES
+
+        You need to have built the CSerpent extension module. 
+        See comments at the top of cserpent_py.c
+
 '''
 
 import os, sys, time, subprocess, importlib
@@ -15,17 +50,17 @@ import cserpent, numpy
 from distutils.sysconfig import get_python_inc
 
 compiler_config_gcc_clang = {
-        'preprocessor': 'cc -E -',
+        'preprocessor': 'cc -E -', # note the dash: read from stdin
         'preprocessor_include_flag': '-I',
         'compiler': 'cc',
         'include_flag': '-I',
         'linkdir_flag': '-L',
-        'rpath_flag': '-Wl,--disable-new-dtags,-rpath,',
-        'output_flag': '-o ',
+        'rpath_flag': '-Wl,--disable-new-dtags,-rpath,', # set to None if not needed
+        'output_flag': '-o ', # trailing space is important
         'default_ccflags': [
-                "-Wall", "-Wno-unused-function", 
-                "-shared", "-fPIC", 
-                "-x", "c", "-"] 
+                "-Wall", "-Wno-unused-function", # default warnings
+                "-shared", "-fPIC", # required for building a shard library
+                "-x", "c", "-"] # specify that the input is C code, and read from stdin
 }
 
 class CSerpentModule:

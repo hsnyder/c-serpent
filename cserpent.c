@@ -1,6 +1,9 @@
 /*
 	Harris M. Snyder, 2023
 	This is free and unencumbered software released into the public domain.
+
+	This is the main file for CSerpent. You only need this and stb_c_lexer.h
+	if you are building CSerpent as a standalone program.
 */
 
 #include <stdio.h>

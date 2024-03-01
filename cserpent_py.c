@@ -2,11 +2,17 @@
 // ... Yeah I know, ironic that cserpent can't wrap itself yet
 // (at least not with a pleasant python-side API)
 //
+// Building this will create a python expension module that will
+// allow you to call cserpent from python to generate wrapper code.
+// The extension module and the standalone executable build are 
+// independent. 
+//
 // You can probably build this with:
 //   PY_INC_DIR="$(python -c "import distutils.sysconfig; print(distutils.sysconfig.get_python_inc())")"
 //   cc -shared -fPIC -o cserpent.so cserpent_py.c -I$PY_INC_DIR
 //
 // You'll need the python headers, perhaps from python3-dev or python3-devel
+// if you're on a debian or redhat based system, respectively.
 
 #define CSERPENT_SUPPRESS_MAIN
 #include "cserpent.c"
