@@ -40,8 +40,12 @@ EXAMPLE USAGE
 
 PREREQUISITES
 
-        You need to have built the CSerpent extension module. 
-        See comments at the top of cserpent_py.c
+        - You need to have built the CSerpent extension module. 
+          See comments at the top of cserpent_py.c
+        
+        - You need a supported C compiler. This module has been tested with gcc.
+          Clang should work with only minor modifications to the compiler config.
+          MSVC is not currently supported.
 
 '''
 
@@ -49,18 +53,26 @@ import os, sys, time, subprocess, importlib
 import cserpent, numpy
 from distutils.sysconfig import get_python_inc
 
+# This is the default configuration for gcc.
+# You can override this with your own compiler configuration.
+# This will probably work with clang with only minor modifications.
 compiler_config_gcc = {
         'preprocessor': 'cc -E -', # note the dash: read from stdin
         'preprocessor_include_flag': '-I',
         'compiler': 'cc',
         'include_flag': '-I',
         'linkdir_flag': '-L',
-        'rpath_flag': '-Wl,--disable-new-dtags,-rpath,', # set to None if not needed
         'output_flag': '-o ', # trailing space is important
         'default_ccflags': [
                 "-Wall", "-Wno-unused-function", # default warnings
                 "-shared", "-fPIC", # required for building a shard library
                 "-x", "c", "-"] # specify that the input is C code, and read from stdin
+
+        'rpath_flag': '-Wl,--disable-new-dtags,-rpath,', # set to None if not needed
+        # rpath is a way to "bake" the location of shared libraries into the
+        # compiled binary. This is only needed if you're linking against shared
+        # libraries that are not in the standard search path. If you're not sure,
+        # you probably don't need it, and can set this to None.
 }
 
 class CSerpentModule:
