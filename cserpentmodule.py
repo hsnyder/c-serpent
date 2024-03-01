@@ -63,10 +63,10 @@ compiler_config_gcc = {
         'include_flag': '-I',
         'linkdir_flag': '-L',
         'output_flag': '-o ', # trailing space is important
-        'default_ccflags': [
+        'default_ccflags': [ 
                 "-Wall", "-Wno-unused-function", # default warnings
                 "-shared", "-fPIC", # required for building a shard library
-                "-x", "c", "-"] # specify that the input is C code, and read from stdin
+                "-x", "c", "-"], # specify that the input is C code, and read from stdin
 
         'rpath_flag': '-Wl,--disable-new-dtags,-rpath,', # set to None if not needed
         # rpath is a way to "bake" the location of shared libraries into the
@@ -138,7 +138,7 @@ class CSerpentModule:
                         print(cserpent_stderr)
                         return None
 
-                full_code = cserpent_stdout + "\n" + preprocessed_code
+                full_code = c_code + "\n\n" + cserpent_stdout 
 
                 opath=os.path.join(self.working_dir, python_mod_name + ".so")
                 compiler_command = self.compiler_config['compiler'].split()
@@ -163,10 +163,11 @@ class CSerpentModule:
                         print("Compilation failed:")
                         print(compiler_result.stderr.decode('utf-8'))
                         return None
-
-                sys.modules[self.modname] = importlib.import_module(python_mod_name)
-                if self.last_opath: os.remove(self.last_opath)
-                self.last_opath = opath
-
                 print("Build successful!")
-                return sys.modules[self.modname]
+
+                imported = importlib.import_module(python_mod_name)
+                sys.modules[self.modname] = imported 
+                if self.last_opath and os.path.isfile(self.last_opath): 
+                        os.remove(self.last_opath)
+                self.last_opath = opath
+                return imported

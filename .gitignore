@@ -12,3 +12,4 @@ c-serpent
 *.test.sh
 cserpent
 __pycache__/
+.ipynb_checkpoints/
