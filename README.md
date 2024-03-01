@@ -12,11 +12,28 @@ this process easier by automatically generating the necessary "wrapper"
 code that is required to make a C function callable just like an ordinary
 python function. 
 
-C-serpent is a standalone program. Given a list of file paths and function 
-names, c-serpent reads the specified files and parses the type signatures 
-of the specified functions, then generates wrapper functions which use the
-Python C API to do the necessary conversions between Python datatypes and
-C datatypes, and so on. 
+There are two ways to use C-serpent:
+
+- **As a standalone program.** You can compile cserpent.c and then use
+  it as a standalone command-line program. Using command line arguments,
+  you tell it where your source files are and which functions you want 
+  wrapped. C-serpent reads the files, parses the function signatures, 
+  and emits the wrapper code for you. You compile the wrapper and your code
+  together yourself. Using C-serpent this way gives you full control over
+  your build process: C-serpent is *only* generating boilerplate code
+  for you. However, you'll have to read the documentation to understand
+  the command-line interface, as there are several options.
+
+- **For interactive development in Jupyter.** If you use Jupyter for
+  interactive development, you can just write C code in a string within
+  your notebook and use the machinery in cserpentmodule.py to compile and
+  run it on the fly. Live code re-loading is supported.
+  cserpentmodule assumes the compiler is gcc, but it should work with 
+  clang as well if you override some default options. See cserpentmodule.py
+  for details. MSVC is not currently supported.
+
+The rest of this README focuses on C-serpent as a standalone program. 
+See NotebookExample.py to learn about using C-serpent interactively.
 
 C-serpent is not completely general-purpose:
 

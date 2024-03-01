@@ -97,6 +97,7 @@ class CSerpentModule:
                         includedirs=[], # recommend absolute paths 
                         linkdirs=[],    # recommend absolute paths 
                         linkflags=[],
+                        extra_cserpent_flags=[],
                         ):
                 
                 if 'CSERPENT_EXTRA_INCLUDE_DIRS' in os.environ:
@@ -129,7 +130,7 @@ class CSerpentModule:
                 now = str(int(time.time()))
                 python_mod_name = self.modname + "_" + now
 
-                cserpent_args = ["-m", python_mod_name, "-D", "-f", "-"] + functions
+                cserpent_args = ["-m", python_mod_name, "-D", "-f", "-"] + extra_cserpent_flags + functions
                 cserpent_rtncode, cserpent_stdout, cserpent_stderr = \
                         cserpent.cserpent(cserpent_args, preprocessed_code)
                 
