@@ -7,8 +7,8 @@
 *.swp
 tags
 c-serpent
-*.py
 *.so
 *.test.c
 *.test.sh
 cserpent
+__pycache__/

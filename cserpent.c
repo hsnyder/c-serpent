@@ -117,6 +117,7 @@ typedef struct
 
 	FILE *ostream;
 	FILE *estream;
+	FILE *istream;
 
 	FILE *volatile * open_file;
 	jmp_buf *jmp;
@@ -186,10 +187,8 @@ typedef struct {
 #  endif
 #endif
 
-#define internal static
-#define global static
 
-internal int 
+static int 
 repr_type(int bufsz, char buf[], Type type) 
 {
 
@@ -213,7 +212,7 @@ repr_type(int bufsz, char buf[], Type type)
 }
 
 
-internal int 
+static int 
 repr_symbol(int bufsz, char buf[], Symbol s) 
 {
 
@@ -225,7 +224,7 @@ repr_symbol(int bufsz, char buf[], Symbol s)
 	return x + repr_type(bufsz, buf, s.type);
 }
 
-internal void 
+static void 
 repr_token(int bufsz, char buf[], Token t)
 {
 	switch (t.toktype) {
@@ -267,7 +266,7 @@ repr_token(int bufsz, char buf[], Token t)
 	}
 }
 
-internal void 
+static void 
 dump_context(FILE *f, ParseCtx *p)
 {
 	long long before = MIN(p->tokens - p->tokens_first, 20); 
@@ -285,13 +284,13 @@ dump_context(FILE *f, ParseCtx *p)
 	fprintf(f,"\n");
 }
 
-internal _Noreturn void
+static _Noreturn void
 terminate(CSerpentArgs *args) {
 	(void) args;
 	longjmp(*args->jmp, 1);
 }
 
-internal _Noreturn void
+static _Noreturn void
 die (ParseCtx *p, const char * fmt, ...)
 {
 	FILE *where = p ? p->args.estream : stderr;
@@ -304,7 +303,7 @@ die (ParseCtx *p, const char * fmt, ...)
 	terminate(&p->args);
 }
 
-internal _Noreturn void
+static _Noreturn void
 die2 (CSerpentArgs args, const char * fmt, ...)
 {
 	va_list va;
@@ -315,7 +314,7 @@ die2 (CSerpentArgs args, const char * fmt, ...)
 	terminate(&args);
 }
 
-internal uint64_t 
+static uint64_t 
 hash (char *s, int32_t len)
 {
 	uint64_t h = 0x100;
@@ -326,7 +325,7 @@ hash (char *s, int32_t len)
 	return h ^ h>>32;
 }
 
-internal int32_t 
+static int32_t 
 ht_lookup(uint64_t hash, int exp, int32_t idx)
 {
 	uint32_t mask = ((uint32_t)1 << exp) - 1;
@@ -334,7 +333,7 @@ ht_lookup(uint64_t hash, int exp, int32_t idx)
 	return (idx + step) & mask;
 }
 
-internal char *
+static char *
 intern_string(CSerpentArgs args, StorageBuffers *st, char *key, int keylen)
 {
 	if (keylen == 0) keylen = strlen(key);
@@ -360,7 +359,7 @@ intern_string(CSerpentArgs args, StorageBuffers *st, char *key, int keylen)
 	}
 }
 
-internal int 
+static int 
 xatoi (CSerpentArgs args, const char *x, int *nchars_read)
 {
 	const char * save = x;
@@ -396,7 +395,7 @@ overflow:
 }
 
 
-internal Symbol *
+static Symbol *
 add_symbol(CSerpentArgs args, StorageBuffers *storage, Symbol s)
 {
 	if(storage->nsym == COUNT_ARRAY(storage->symbols)) die2(args, "symbol table full");
@@ -405,7 +404,7 @@ add_symbol(CSerpentArgs args, StorageBuffers *storage, Symbol s)
 	return &storage->symbols[storage->nsym++];
 }
 
-internal Symbol *
+static Symbol *
 get_symbol(StorageBuffers *storage, char *name)
 {
 	for(int i = 0; i < storage->nsym; i++)
@@ -413,7 +412,7 @@ get_symbol(StorageBuffers *storage, char *name)
 	return 0;
 }
 
-internal Symbol *
+static Symbol *
 get_symbol_or_die(CSerpentArgs args, StorageBuffers *storage, char *name)
 {
 	Symbol *s = get_symbol(storage, name);
@@ -421,13 +420,13 @@ get_symbol_or_die(CSerpentArgs args, StorageBuffers *storage, char *name)
 	return s;
 }
 
-internal void 
+static void 
 clear_symbols(StorageBuffers *storage)
 {
 	storage->nsym = 0;
 }
 
-internal int 
+static int 
 modify_type_pointer(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -437,7 +436,7 @@ modify_type_pointer(ParseCtx *p, Type *type)
 	return 1;
 }
 
-internal void 
+static void 
 modify_type_const(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -446,7 +445,7 @@ modify_type_const(ParseCtx *p, Type *type)
 	else type->is_const = 1;
 }
 
-internal void 
+static void 
 modify_type_restrict(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -455,7 +454,7 @@ modify_type_restrict(ParseCtx *p, Type *type)
 	else type->is_restrict = 1;
 }
 
-internal void 
+static void 
 modify_type_volatile(ParseCtx *p, Type *type)
 {
 	(void) p;
@@ -464,7 +463,7 @@ modify_type_volatile(ParseCtx *p, Type *type)
 	else type->is_volatile = 1;
 }
 
-internal void 
+static void 
 modify_type_struct(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -473,7 +472,7 @@ modify_type_struct(ParseCtx *p, Type *type)
 	else die(p, "'struct' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_union(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -482,7 +481,7 @@ modify_type_union(ParseCtx *p, Type *type)
 	else die(p, "'union' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_void(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -497,7 +496,7 @@ modify_type_void(ParseCtx *p, Type *type)
 	else die(p, "'void' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_char(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -508,7 +507,7 @@ modify_type_char(ParseCtx *p, Type *type)
 	else die(p, "'char' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_short(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -519,7 +518,7 @@ modify_type_short(ParseCtx *p, Type *type)
 	else die(p, "'short' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_int(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -534,7 +533,7 @@ modify_type_int(ParseCtx *p, Type *type)
 	else die(p, "'int' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_long(ParseCtx *p, Type *type) 
 {
 	assert(type);
@@ -547,7 +546,7 @@ modify_type_long(ParseCtx *p, Type *type)
 	else die(p, "'long' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_float(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -559,7 +558,7 @@ modify_type_float(ParseCtx *p, Type *type)
 	else die(p, "'float' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_double(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -572,7 +571,7 @@ modify_type_double(ParseCtx *p, Type *type)
 	else die(p, "'double' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_signed(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -581,7 +580,7 @@ modify_type_signed(ParseCtx *p, Type *type)
 	type->explicit_signed = 1;
 }
 
-internal void 
+static void 
 modify_type_unsigned(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -590,7 +589,7 @@ modify_type_unsigned(ParseCtx *p, Type *type)
 	type->is_unsigned = 1;
 }
 
-internal void 
+static void 
 modify_type_bool(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -602,7 +601,7 @@ modify_type_bool(ParseCtx *p, Type *type)
 	else die(p, "'_Bool' does not make sense with '%s'", type_category_strings[type->category]);
 }
 
-internal void 
+static void 
 modify_type_complex(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -612,7 +611,7 @@ modify_type_complex(ParseCtx *p, Type *type)
 	// TODO check against struct/union?
 }
 
-internal void 
+static void 
 modify_type_imaginary(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -622,7 +621,7 @@ modify_type_imaginary(ParseCtx *p, Type *type)
 	// TODO check against struct/union?
 }
 
-internal int 
+static int 
 compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int compare_volatile, int compare_restrict) 
 {
 	if(a.category != b.category) return 0;
@@ -670,7 +669,7 @@ compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int 
 	==========================================================
 */
 
-internal void 
+static void 
 emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
 {
 	if(!args.modulename) return;
@@ -725,11 +724,11 @@ emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_n
 	"} \n", args.modulename, args.modulename);
 }
 
-internal void 
+static void 
 emit_preamble(CSerpentArgs args)
 {
 	(void) args;
-	global const char * preamble = 
+	static const char * preamble = 
 	"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
 	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
 	"#include <Python.h> \n"
@@ -753,7 +752,7 @@ emit_preamble(CSerpentArgs args)
 	fprintf(args.ostream, "%s\n", preamble);
 }
 
-internal int 
+static int 
 is_string(Type t)
 {
 	return t.category == T_CHAR
@@ -762,14 +761,14 @@ is_string(Type t)
 		&& t.is_pointer;
 }
 
-internal int 
+static int 
 is_voidptr(Type t)
 {
 	return t.category == T_VOID
 		&& t.is_pointer;
 }
 
-internal int 
+static int 
 is_plainvoid(Type t)
 {
 	Type zero = {0};
@@ -780,7 +779,7 @@ is_plainvoid(Type t)
 	return 0;
 }
 
-internal int 
+static int 
 is_array(Type t)
 {
 	return !is_string(t) 
@@ -788,7 +787,7 @@ is_array(Type t)
 		&& t.is_pointer;
 }
 
-internal Type 
+static Type 
 basetype(Type t)
 {
 	t.is_pointer = 0;
@@ -801,7 +800,7 @@ basetype(Type t)
 	return t;
 }
 
-internal void 
+static void 
 emit_exceptionhandling(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 {
 	if(args.error_handling.active) {
@@ -837,7 +836,7 @@ emit_exceptionhandling(const char *fn, CSerpentArgs args, int n_fnargs, Symbol f
 	}
 }
 
-internal void 
+static void 
 emit_call(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 {
 	fprintf(args.ostream, "%s (", fn);
@@ -854,7 +853,7 @@ emit_call(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 	fprintf(args.ostream, ");\n");
 }
 
-internal int 
+static int 
 emit_py_buildvalue_fmt_char(CSerpentArgs args, Type t) 
 {
 	if      (t.category == T_CHAR) fprintf(args.ostream, "b");
@@ -873,7 +872,7 @@ emit_py_buildvalue_fmt_char(CSerpentArgs args, Type t)
 	return 1;
 }
 
-internal void 
+static void 
 emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], Type rtntype)
 {
 	assert(n_fnargs >= 0);
@@ -1093,7 +1092,7 @@ emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], 
 
 }
 
-internal void 
+static void 
 emit_dispatch_wrapper (
 	ParseCtx p,
 	const char *fn, 
@@ -1210,7 +1209,7 @@ emit_dispatch_wrapper (
 */
 
 
-internal int 
+static int 
 eat_identifier(ParseCtx *p, const char *id)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1223,7 +1222,7 @@ eat_identifier(ParseCtx *p, const char *id)
 	return 0;
 }
 
-internal int 
+static int 
 eat_token(ParseCtx *p, long toktype)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1234,7 +1233,7 @@ eat_token(ParseCtx *p, long toktype)
 	return 0;
 }
 
-internal int
+static int
 check_token_is_identifier(Token *t, const char *id, long id_len)
 {
 	if (id_len == 0) 
@@ -1249,7 +1248,7 @@ check_token_is_identifier(Token *t, const char *id, long id_len)
 	return 0;
 }
 
-internal int 
+static int 
 identifier(ParseCtx *p, char** out_id)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1262,7 +1261,7 @@ identifier(ParseCtx *p, char** out_id)
 	return 0;
 }
 
-internal int 
+static int 
 typedef_name(ParseCtx *p, Type *t)
 {
 	if(p->tokens == p->tokens_end) return 0;
@@ -1278,7 +1277,7 @@ typedef_name(ParseCtx *p, Type *t)
 	return 0;
 }
 
-internal int 
+static int 
 supported_type(ParseCtx *p, Type *t)
 {
 	if (p->tokens == p->tokens_end) return 0;
@@ -1311,7 +1310,7 @@ supported_type(ParseCtx *p, Type *t)
 	return 0;	
 }
 
-internal int 
+static int 
 supported_type_list(ParseCtx *p, Type *t)
 {
 	if(!supported_type(p,t)) return 0;
@@ -1319,7 +1318,7 @@ supported_type_list(ParseCtx *p, Type *t)
 	return 1;
 }
 
-internal int 
+static int 
 supported_typedef(ParseCtx *p, Symbol *s)
 {
 	SAVE(p);
@@ -1342,7 +1341,7 @@ supported_typedef(ParseCtx *p, Symbol *s)
 	return 0;
 }
 
-internal void 
+static void 
 populate_symbols(StorageBuffers *storage, ParseCtx p)
 {
 	while(p.tokens != p.tokens_end) {
@@ -1370,7 +1369,7 @@ populate_symbols(StorageBuffers *storage, ParseCtx p)
 }
 
 
-internal int 
+static int 
 arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 {
 	SAVE(p);
@@ -1421,7 +1420,7 @@ arg(ParseCtx *p, const char *fn, Symbol *fnarg, int fatal)
 	return 1;
 }
 
-internal int 
+static int 
 arglist(ParseCtx *p, const char *fn, int max_args, int *num_args, Symbol fnargs[], int fatal)
 {
 	SAVE(p);
@@ -1457,7 +1456,7 @@ arglist(ParseCtx *p, const char *fn, int max_args, int *num_args, Symbol fnargs[
 	return 0;
 }
 
-internal void 
+static void 
 attributes(ParseCtx *p, const char *fn)
 {
 	while(1) {
@@ -1483,7 +1482,7 @@ attributes(ParseCtx *p, const char *fn)
 	}
 }
 
-internal void 
+static void 
 process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 {
 	// on entry, p.tokens is set right on the function name.	
@@ -1519,7 +1518,7 @@ process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 	emit_wrapper (fn, p.args, num_args, argsyms, rtn_t);
 }
 
-internal int 
+static int 
 parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_ARGS])
 {
 	long len = strlen(function_name);
@@ -1548,7 +1547,7 @@ parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_A
 #endif
 
 
-internal void 
+static void 
 print_context(CSerpentArgs args, char *start, char *loc)
 {
 	char *first = loc;
@@ -1575,7 +1574,7 @@ enum delim_stack_action {
 	DS_QUERY,
 };
 
-internal long 
+static long 
 delim_stack(CSerpentArgs args, StorageBuffers *storage, enum delim_stack_action action, Token value, char *start, char* loc) {
 	switch(action) {
 	case DS_PUSH:
@@ -1646,28 +1645,35 @@ mismatch_close:
 	terminate(&args);
 }
 
-internal void 
+static void 
 delim_push(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
 { 
 	(void)delim_stack(args, storage, DS_PUSH, value, start, loc); 
 }
 
-internal int  
+static int  
 delim_pop(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
 { 
 	return delim_stack(args, storage, DS_POP, value, start, loc); 
 }
 
-internal int  
+static int  
 toplevel(CSerpentArgs args, StorageBuffers *storage) 
 { 
 	return delim_stack(args, storage, DS_QUERY, (Token){0}, 0, 0); 
 }
 
-internal void
-ingest_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+static void
+ingest_file(StorageBuffers *st, CSerpentArgs args, long long text_bufsz, char *text)
 {
-	if(!args.preprocessor || args.disable_pp) {
+	// if we're reading from stdin, we need to treat a lot of things differently
+	if(!strcmp(args.filename, "-")) {
+
+		// we ignore the preprocessor flag in this case, stdin MUST be the preprocessor output
+		long long len = fread(text, 1, text_bufsz, args.istream);
+		if(len == text_bufsz) die2(args, "input file too long");
+
+	} else if(!args.preprocessor || args.disable_pp) {
 
 		// read the usual way
 		FILE *f = fopen(args.filename, "rb");
@@ -1683,7 +1689,7 @@ ingest_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Toke
 		// read via popen to preprocessor command
 		char cmd[4096] = {0};
 		if(ssizeof(cmd) <= snprintf(cmd, sizeof(cmd), "%s %s", args.preprocessor, args.filename)) 
-			die2(args, "internal buffer overflow");
+			die2(args, "static buffer overflow");
 		
 		FILE *f = popen(cmd, "r");
 		if(!f) die2(args, "couldn't popen '%s'", cmd);
@@ -1694,13 +1700,14 @@ ingest_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Toke
 		*args.open_file = 0;
 		switch (exit_status) {
 			case  0: break;
-			case -1: die2(args, "wait4 on '%s' failed, or other internal error occurred", cmd);
+			case -1: die2(args, "wait4 on '%s' failed, or other static error occurred", cmd);
 			default: die2(args, "'%s' failed with code %i", cmd, exit_status);
 		}
 	}
 }
 
-internal int 
+
+static int 
 lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
 {
 	int ntok = 0;
@@ -1725,7 +1732,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 			char path[4096] = {0};
 			// TODO accomodate windows
 			if(ssizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
-				die2(args, "internal buffer overflow (path too long)");
+				die2(args, "static buffer overflow (path too long)");
 			f = fopen(path, "rb");
 			if(f) break;
 		}
@@ -1735,7 +1742,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 			char path[4096] = {0};
 			// TODO accomodate windows
 			if(ssizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
-				die2(args, "internal buffer overflow (path too long)");
+				die2(args, "static buffer overflow (path too long)");
 			f = fopen(path, "rb");
 		}
 
@@ -1756,7 +1763,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 		Read input file
 	*/
 
-	ingest_file(st, args, tokens_maxnum, tokens, text_bufsz, text_start, string_store_bufsz, string_store);
+	ingest_file(st, args, text_bufsz, text_start);
 	
 	/*
 		Lex whole file
@@ -1767,7 +1774,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 	stb_lexer lex = {0};
 	stb_c_lexer_init(&lex, text_start, text+strlen(text_start), (char *) string_store, string_store_bufsz);
 	while(stb_c_lexer_get_token(&lex)) {
-		if(tokens_maxnum == ntok) die2(args, "internal buffer overflow");
+		if(tokens_maxnum == ntok) die2(args, "static buffer overflow");
 
 		Token t = {.toktype = lex.token};
 		switch(lex.token)
@@ -1850,7 +1857,7 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 */
 
 
-internal void 
+static void 
 usage(void)
 {
 	const char *message = 
@@ -2001,7 +2008,7 @@ usage(void)
 
 
 int 
-cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
+cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream)
 {
 	
 	// allocate all the memory we need up front
@@ -2033,6 +2040,7 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 
 	CSerpentArgs args = {
 			.preprocessor = "cc -E", 
+			.istream=in_stream,
 			.ostream=out_stream, 
 			.estream=err_stream, 
 			.jmp = &jmp,
@@ -2322,16 +2330,75 @@ cserpent_main (char *argv[], FILE *out_stream, FILE *err_stream)
 	return ! _resources.success; // rtn zero on success
 }
 
+#if (_POSIX_C_SOURCE >= 200809L) // reqs fmemopen
+int
+cserpent_main_buffers(
+	char *cserpent_argv[],
+
+	long long stdin_buf_size,
+	unsigned char *stdin_buf, 
+
+	long long stdout_buf_size,
+	unsigned char *stdout_buf,
+
+	long long stderr_buf_size,
+	unsigned char *stderr_buf)
+{
+	/*
+		Run C-Serpent from in-memory buffers provided	
+
+		RETURNS
+			0 on success
+			1 on failure
+			1 on invalid arguments (no explanation is given)
+	*/
+
+	if(!cserpent_argv) return 1;
+
+	int rtn = 1;
+	FILE *in=0, *out=0, *err=0;
+	
+	if(stdin_buf) {
+		in = fmemopen(stdin_buf, stdin_buf_size, "r");
+		if(!in) goto bail;
+	} else {
+		in = stdin;
+	}
+
+	if(stdout_buf) {
+		out = fmemopen(stdout_buf, stdout_buf_size, "w");
+		if(!out) goto bail;
+	} else {
+		out = stdout;
+	}
+
+	if(stderr_buf) {
+		err = fmemopen(stderr_buf, stderr_buf_size, "w");
+		if(!err) goto bail;
+	} else {
+		err = stderr;
+	}
+
+	rtn = cserpent_main(cserpent_argv, in, out, err);
+
+	bail:
+	if(in && stdin_buf)   fclose(in);
+	if(out && stdout_buf) fclose(out);
+	if(err && stderr_buf) fclose(err);
+	return rtn;
+}
+#endif
+
 #ifndef CSERPENT_SUPPRESS_MAIN
 int 
 main (int argc, char *argv[])
 {
 	(void)argc;
-	argv++;
+	argv++; // strip off the conventional program name
 	if(!*argv) {
 		usage(); 
 		exit(EXIT_FAILURE);
 	}
-	return cserpent_main(argv, stdout, stderr);
+	return cserpent_main(argv, stdin, stdout, stderr);
 }
 #endif
