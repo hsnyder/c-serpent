@@ -32,6 +32,11 @@ There are two ways to use C-serpent:
   clang as well if you override some default options. See cserpentmodule.py
   for details. MSVC is not currently supported.
 
+  *March 2024:* C-Serpent is now available on PyPI, and can be installed with 
+  `pip install cserpent`. It is distributed as a *source package,* so you
+  will need a compiler and python development headers available. Contributions 
+  which improve the packaging and distribution are very, very welcome.
+
 The rest of this README focuses on C-serpent as a standalone program. 
 See NotebookExample.py to learn about using C-serpent interactively.
 
