@@ -84,7 +84,7 @@ typedef struct {
 
 typedef struct { // lexer token
 
-	long toktype; // this will be one of the enum values in stb_c_lexer
+	int toktype; // this will be one of the enum values in stb_c_lexer
 	int string_len;
 	union {
 		double real_number;
@@ -132,7 +132,6 @@ typedef struct
 enum { 
 	MAX_STRINGS_EXP=15, 
 	MAX_STRING_HEAP=(1<<22),
-	MAX_DELIMSTACK=200,
 	MAX_SYMBOLS=10000,
 };
 
@@ -146,12 +145,6 @@ typedef struct {
 	// Symbol table
 	int nsym;
 	Symbol symbols[MAX_SYMBOLS];
-
-	// Delimiter stack
-	short delimstack[MAX_DELIMSTACK];
-	char *delimstack_locations[MAX_DELIMSTACK];
-	long  delimstack_pos;
-
 } StorageBuffers;
 
 typedef struct {
@@ -1228,7 +1221,7 @@ eat_identifier(ParseCtx *p, const char *id)
 }
 
 static int 
-eat_token(ParseCtx *p, long toktype)
+eat_token(ParseCtx *p, int toktype)
 {
 	if(p->tokens == p->tokens_end) return 0;
 	if(p->tokens[0].toktype == toktype) {
@@ -1487,14 +1480,18 @@ attributes(ParseCtx *p, const char *fn)
 	}
 }
 
+
+
 static void 
 process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 {
 	// on entry, p.tokens is set right on the function name.	
 	const char * fn = p.tokens[0].string;
-	// rewind to semicolon
-	while(p.tokens[0].toktype != ';') p.tokens--;
-	p.tokens++;
+
+	// rewind to last semicolon / closing brace
+	while(p.tokens[0].toktype != ';' && p.tokens[0].toktype != '}') 
+		p.tokens--;
+	p.tokens++; // then move past the semicolon / closing brace we're on
 
 	Type rtn_t = {0};
 	memset(argsyms, 0, MAX_FN_ARGS*sizeof(argsyms[0]));
@@ -1516,11 +1513,26 @@ process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 
 	attributes(&p, fn);
 
-	if(!eat_token(&p, ';'))
+	if(!(eat_token(&p, ';') || eat_token(&p, '{')))
 		die(&p, "error wrapping function '%s' in '%s': parse error (encountered unrecognized garbage)", fn, p.args.filename);
 
 	// Parse successful, emit the wrapper!
 	emit_wrapper (fn, p.args, num_args, argsyms, rtn_t);
+}
+
+static void 
+advance_and_skip_braced_blocks(ParseCtx *p)
+{
+	p->tokens++; // TODO actually implement this
+	int depth = 0;
+	while(1) {
+		if(p->tokens == p->tokens_end) return;
+		if(p->tokens[0].toktype == '{') depth++;
+		if(p->tokens[0].toktype == '}') depth--;
+		if(depth == 0) return;
+		assert(depth >= 0);
+		p->tokens++;
+	}
 }
 
 static int 
@@ -1534,7 +1546,7 @@ parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_A
 			process_function(p, argsyms);
 			return 1;
 		}
-		p.tokens++;
+		advance_and_skip_braced_blocks(&p);
 	}
 	return 0;
 }
@@ -1571,101 +1583,6 @@ print_context(CSerpentArgs args, char *start, char *loc)
 		if (first == loc) fprintf(args.estream, " HERE>>>");
 		putc(*(first++),args.estream);
 	}
-}
-
-enum delim_stack_action {
-	DS_PUSH,
-	DS_POP,
-	DS_QUERY,
-};
-
-static long 
-delim_stack(CSerpentArgs args, StorageBuffers *storage, enum delim_stack_action action, Token value, char *start, char* loc) {
-	switch(action) {
-	case DS_PUSH:
-		if(storage->delimstack_pos == COUNT_ARRAY(storage->delimstack)) 
-			die2(args, "congratulations, your file blew the delimiter stack");
-
-		storage->delimstack_locations[storage->delimstack_pos] = loc;
-		storage->delimstack[storage->delimstack_pos++] = value.toktype;
-		return -1;
-	case DS_POP:
-		if(storage->delimstack_pos == 0) {
-			fprintf(args.estream, 
-				"mismatched delimiters (extraneous %c)\n\ncontext:\n", 
-				(char)value.toktype);
-
-			print_context(args, start, loc);
-			fputc('\n', args.estream);
-			terminate(&args);
-		}
-		switch(value.toktype)
-		{
-		case '}':
-			if ('{' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(args.estream, 
-					"mismatched delimiters (got '}' to match '%c')\n\n", 
-					storage->delimstack[storage->delimstack_pos]);
-
-				goto mismatch_close;
-			}
-			return delim_stack(args, storage, DS_QUERY, value, start, loc);
-		case ')':
-			if ('(' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(args.estream, 
-					"mismatched delimiters (got ')' to match '%c')\n\n", 
-					storage->delimstack[storage->delimstack_pos]);
-
-				goto mismatch_close;
-			}
-			break;
-		case ']':
-			if ('[' != storage->delimstack[--storage->delimstack_pos]) {
-				fprintf(args.estream, 
-					"mismatched delimiters (got ']' to match '%c')\n\n",
-				       	storage->delimstack[storage->delimstack_pos]);
-
-				goto mismatch_close;
-			}
-			break;
-		default:
-			assert(0);
-		}
-		return 0;
-	case DS_QUERY:
-		for (int i = 0; i < storage->delimstack_pos; i++)
-			if(storage->delimstack[i] == '{') return 0;
-		return 1;
-	default: 
-		assert(0);
-	}
-	return -1;	
-
-mismatch_close:
-	fprintf(args.estream, "opening delimiter context:\n\n");
-	print_context(args, start, storage->delimstack_locations[storage->delimstack_pos]);
-	fprintf(args.estream, "\n\ninvalid closing delimiter context:\n\n");
-	print_context(args, start, loc);
-	fputc('\n', args.estream);
-	terminate(&args);
-}
-
-static void 
-delim_push(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
-{ 
-	(void)delim_stack(args, storage, DS_PUSH, value, start, loc); 
-}
-
-static int  
-delim_pop(CSerpentArgs args, StorageBuffers *storage, Token value, char *start, char* loc) 
-{ 
-	return delim_stack(args, storage, DS_POP, value, start, loc); 
-}
-
-static int  
-toplevel(CSerpentArgs args, StorageBuffers *storage) 
-{ 
-	return delim_stack(args, storage, DS_QUERY, (Token){0}, 0, 0); 
 }
 
 static void
@@ -1713,68 +1630,18 @@ ingest_file(StorageBuffers *st, CSerpentArgs args, long long text_bufsz, char *t
 
 
 static int 
-lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *tokens, long long text_bufsz, char *text, long long string_store_bufsz, char *string_store)
+lex_file(StorageBuffers *st, 
+		CSerpentArgs args, 
+		long long tokens_maxnum, 
+		Token *tokens, 
+		char *text, 
+		long long string_store_bufsz, 
+		char *string_store)
 {
 	int ntok = 0;
-
-	// preserve the start of the text buffer and ensure always null terminated.
 	char *text_start = text;
-	memset(text,0,text_bufsz);
-	text_bufsz--;
 
-	/* 
-		If we're manually including files, do so.
-	*/
-
-	for (int i = 0; i < args.manual_include.nfiles; i++)
-	{
-		// try the current directory
-		FILE *f = fopen(args.manual_include.files[i], "rb");
-
-		// try the list of -I paths
-		if(!f) for (int j = 0; j < args.ndirs; j++)
-		{
-			char path[4096] = {0};
-			// TODO accomodate windows
-			if(ssizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
-				die2(args, "static buffer overflow (path too long)");
-			f = fopen(path, "rb");
-			if(f) break;
-		}
-
-		// try the system default path
-		if(!f) {
-			char path[4096] = {0};
-			// TODO accomodate windows
-			if(ssizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
-				die2(args, "static buffer overflow (path too long)");
-			f = fopen(path, "rb");
-		}
-
-		if(!f) die2(args, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
-
-		*args.open_file = f;
-
-		long long len = fread(text, 1, text_bufsz, f);
-		if(len == text_bufsz) die2(args,"input file too long");
-		text += len;
-		text_bufsz -= len;
-
-		fclose(f);
-		*args.open_file = 0;
-	}
-
-	/*
-		Read input file
-	*/
-
-	ingest_file(st, args, text_bufsz, text_start);
-	
-	/*
-		Lex whole file
-	*/
-
-	tokens[ntok++] = (Token){.toktype=';'};
+	tokens[ntok++] = (Token){.toktype=';'}; // parser expects token stream to start with a semicolon
 
 	stb_lexer lex = {0};
 	stb_c_lexer_init(&lex, text_start, text+strlen(text_start), (char *) string_store, string_store_bufsz);
@@ -1834,24 +1701,72 @@ lex_file(StorageBuffers *st, CSerpentArgs args, long long tokens_maxnum, Token *
 				break;
 		}		
 
-		// skip all braced code.
-		// when scanning braced code, check that delimiters match, but that's it. 
-
-		if(t.toktype == '{' || t.toktype == '(' || t.toktype == '[') {
-			delim_push(args, st, t, text_start, lex.where_firstchar);
-		} else if(t.toktype == '}' || t.toktype == ')' || t.toktype == ']') {
-			if(delim_pop(args, st, t, text_start, lex.where_firstchar)) {
-				tokens[ntok++] = (Token){.toktype=';'};
-				continue;
-			}
-		}
-
-		if(toplevel(args, st)) {
-			tokens[ntok++] = t;
-		} 
+		tokens[ntok++] = t;
 	}
 
 	return ntok;
+}
+
+
+static int 
+read_file_with_includes(
+		StorageBuffers *st, 
+		CSerpentArgs args, 
+		long long text_bufsz, 
+		char *text)
+{
+	// preserve the start of the text buffer and ensure always null terminated.
+	char *text_start = text;
+	memset(text,0,text_bufsz);
+	text_bufsz--;
+
+	/* 
+		If we're manually including files, do so.
+	*/
+
+	for (int i = 0; i < args.manual_include.nfiles; i++)
+	{
+		// try the current directory
+		FILE *f = fopen(args.manual_include.files[i], "rb");
+
+		// try the list of -I paths
+		if(!f) for (int j = 0; j < args.ndirs; j++)
+		{
+			char path[4096] = {0};
+			// TODO accomodate windows
+			if(ssizeof(path) <= snprintf(path, sizeof(path), "%s/%s", args.dirs[j], args.manual_include.files[i])) 
+				die2(args, "static buffer overflow (path too long)");
+			f = fopen(path, "rb");
+			if(f) break;
+		}
+
+		// try the system default path
+		if(!f) {
+			char path[4096] = {0};
+			// TODO accomodate windows
+			if(ssizeof(path) <= snprintf(path, sizeof(path), "/usr/include/%s", args.manual_include.files[i])) 
+				die2(args, "static buffer overflow (path too long)");
+			f = fopen(path, "rb");
+		}
+
+		if(!f) die2(args, "couldn't find file to be manually included: %s", args.manual_include.files[i]);
+
+		*args.open_file = f;
+
+		long long len = fread(text, 1, text_bufsz, f);
+		if(len == text_bufsz) die2(args,"input file too long");
+		text += len;
+		text_bufsz -= len;
+
+		fclose(f);
+		*args.open_file = 0;
+	}
+
+	/*
+		Read input file
+	*/
+
+	ingest_file(st, args, text_bufsz, text_start);
 }
 
 
@@ -1905,7 +1820,7 @@ usage(void)
 	"-D   disable including declarations for the functions to be wrapped in the   \n"
 	"     generated wrapper file. This might be used to facilitate amalgamation   \n"
 	"     builds, for example.  \n"
-	"                                                                                                                                                           \n"
+	"                                                                                \n"
 	"-x   if you have some extra handwritten wrappers, you can use '-x whatever'    \n"
 	"     to include the function 'whatever' (calling 'wrap_whatever') in the       \n"
 	"     generated module. You'll need to prepend the necessary code to the file   \n"
@@ -2022,7 +1937,7 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 	
 	char  *text         = calloc(1, 1<<27);
 	char  *string_store = calloc(1, 0x10000);
-	Token *tokens       = calloc(1, (1<<27) * sizeof(*tokens));
+	Token *tokens       = calloc(1, (1<<27) * sizeof(*tokens)); // same size as text buffer -> running out is impossible
 	StorageBuffers *storage = calloc(1, sizeof(*storage)); 
 
 	// to facilitate returning from errors deep in the call stack we will use setjmp/longjmp
@@ -2200,7 +2115,8 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 				// TODO: improve so that we can just memset a whole sub-struct to 0.
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
-				ntok = lex_file(storage, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
+				read_file_with_includes(storage, args, 1<<27, text);
+				ntok = lex_file(storage, args, 1<<27, tokens, text, 0x10000, string_store);
 				clear_symbols(storage);
 				populate_symbols(
 					storage, 
