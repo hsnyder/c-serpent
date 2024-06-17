@@ -70,6 +70,7 @@ typedef struct type {
 	short is_pointer_volatile : 1;
 } Type;
 
+
 typedef struct {
 	char *name;
 	Type type;
@@ -102,6 +103,7 @@ typedef struct
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
+	int parse_enums;
 	int generic;
 	int generic_keep_trailing_underscore;
 	int ndirs;
@@ -1941,6 +1943,8 @@ usage(void)
 	"                                                                               \n"
 	"     this flag only lasts until the next file change (i.e. -f)   \n"
 	"                                                                               \n"
+	"-E   for the current file, add all enum constants to the python module.\n"
+	"                                                                               \n"
 	"-e   for functions that follow: if they return a string (const char *), the    \n"
 	"     string is to be interpreted as an error message (if not null) and a python  \n"
 	"     exception should be thrown.  \n"
@@ -2058,8 +2062,8 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 	if (getenv("CSERPENT_PP")) 
 		args.preprocessor = getenv("CSERPENT_PP");
 
-	const char *fnames[200] = {0};
 	_Bool fname_needs_remove_underscore[200] = {0};
+	const char *fnames[200] = {0};
 	int n_fnames = 0;
 
 	int ntok = 0;
@@ -2090,6 +2094,12 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 
 		if (!strcmp(*argv, "-P")) {
 			args.disable_pp = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-E")) {
+			args.parse_enums = 1;
 			argv++;
 			continue;
 		}
@@ -2186,6 +2196,8 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 			// we're expecting a filename to follow, or '-' to indicate stdin, but not another flag yet
 			if(*argv && (!strcmp(*argv, "-")) || **argv != '-') {
 
+				// This section does a lot of resetting of individual bits of the args struct.
+				// TODO: improve so that we can just memset a whole sub-struct to 0.
 				memset(&args.error_handling, 0, sizeof(args.error_handling));
 				args.filename = *argv;
 				ntok = lex_file(storage, args, 1<<27, tokens, 1<<27, text, 0x10000, string_store );
@@ -2199,6 +2211,7 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 						.storage       =  storage,
 						.args          =  args, }
 					);
+				args.parse_enums = 0;
 				args.disable_pp = 0;
 				args.generic = 0;
 				args.generic_keep_trailing_underscore = 0;
@@ -2333,7 +2346,7 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 	return ! _resources.success; // rtn zero on success
 }
 
-#if (_POSIX_C_SOURCE >= 200809L) // reqs fmemopen
+#if (_POSIX_C_SOURCE >= 200809L || defined(__APPLE__)) // requires fmemopen
 int
 cserpent_main_buffers(
 	char *cserpent_argv[],

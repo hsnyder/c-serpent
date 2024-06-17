@@ -232,6 +232,9 @@ Flags:
          that functionality, causing trailing underscores to be kept.            
                                                                                    
          this flag only lasts until the next file change (i.e. -f)                                                                                
+     
+    -E   for the current file, add all enum constants to the python module.
+
     -e   for functions that follow: if they return a string (const char *), the    
          string is to be interpreted as an error message (if not null) and a python  
          exception should be thrown.  
