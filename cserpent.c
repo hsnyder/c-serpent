@@ -103,7 +103,6 @@ typedef struct
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
-	int parse_enums;
 	int generic;
 	int generic_keep_trailing_underscore;
 	int ndirs;
@@ -165,7 +164,6 @@ typedef struct {
 #define ssizeof(x) ((int64_t)sizeof(x))
 #define COUNT_ARRAY(x) ((int64_t)(sizeof(x)/sizeof(x[0])))
 
-#define OPTIONAL(x) ((x), 1)
 #define RESTORE(p)  (*p = p_saved);
 #define SAVE(p) ParseCtx p_saved = *p; 
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -668,7 +666,13 @@ compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int 
 */
 
 static void 
-emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_needs_strip_underscore[])
+emit_module(
+	CSerpentArgs args, 
+	int n_fnames, 
+	const char *fnames[], 
+	_Bool fname_needs_strip_underscore[],
+	int num_enum_consts, 
+	char *enum_consts[])
 {
 	if(!args.modulename) return;
 
@@ -712,6 +716,13 @@ emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_n
 	"	// Register the module \n"
 	"	if (!(m = PyModule_Create(&module_def))) \n"
 	"		return NULL; \n"
+	" \n", args.modulename);
+
+	for(int e = 0; e < num_enum_consts; e++) {
+		fprintf(args.ostream, "	PyModule_AddIntConstant(m, \"%s\", %s);\n", enum_consts[e], enum_consts[e]);
+	}
+
+	fprintf(args.ostream,
 	" \n"
 	"	return m; \n"
 	"} \n"
@@ -719,7 +730,7 @@ emit_module(CSerpentArgs args, int n_fnames, const char *fnames[], _Bool fname_n
 	"PyMODINIT_FUNC PyInit_%s (void) \n"
 	"{ \n"
 	"	return module_init(); \n"
-	"} \n", args.modulename, args.modulename);
+	"} \n", args.modulename);
 }
 
 static void 
@@ -1523,7 +1534,7 @@ process_function(ParseCtx p, Symbol argsyms[static MAX_FN_ARGS])
 static void 
 advance_and_skip_braced_blocks(ParseCtx *p)
 {
-	p->tokens++; // TODO actually implement this
+	p->tokens++; 
 	int depth = 0;
 	while(1) {
 		if(p->tokens == p->tokens_end) return;
@@ -1536,7 +1547,7 @@ advance_and_skip_braced_blocks(ParseCtx *p)
 }
 
 static int 
-parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_ARGS])
+parse_file_look_for_function(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_ARGS])
 {
 	long len = strlen(function_name);
 
@@ -1552,9 +1563,80 @@ parse_file(ParseCtx p, const char *function_name, Symbol argsyms[static MAX_FN_A
 }
 
 
+static int
+process_enum(ParseCtx p, int max_enum_consts, char **enum_const_names)
+{
+	// current token is set to the 'enum' keyword
+	p.tokens++;
+	if(p.tokens == p.tokens_end) die(&p, "parse error: unexpected end of file");
+
+	// optional tag
+	char *enum_name = "";
+	identifier(&p, &enum_name);
+
+	// expect brace
+	if(!eat_token(&p, '{')) die(&p, "parse error in enum %s: expected '{'", enum_name);
+
+	// parse enum constants
+	int nconsts = 0;
+	while(p.tokens != p.tokens_end) {
+		if(p.tokens[0].toktype == '}') break;
+		if(p.tokens[0].toktype == ',') { p.tokens++; continue; }
+
+		char *const_name = 0;
+		if(!identifier(&p, &const_name)) die(&p, "parse error in enum %s: expected identifier", enum_name);
+
+		if(nconsts < max_enum_consts) {
+			enum_const_names[nconsts++] = intern_string(p.args, p.storage, const_name, strlen(const_name));
+		}
+
+		if(eat_token(&p, '=')) {
+			// skip everything until comma or close brace
+			// but that's tricky because the expression could have a comma in it, 
+			// if it's enclosed in parens or square brackets (though such statements are uncommon).
+			// let's not differentiate between the two, and just track depth in either delimiter.
+			// technically that's a bug but it'll work correctly on the vast majority of sane code.
+			int depth = 0;
+			while (1) {
+				if(p.tokens == p.tokens_end) die(&p, "parse error in enum %s: unexpected end of file", enum_name);
+				if(p.tokens[0].toktype == ',' && depth == 0) break;
+				if(p.tokens[0].toktype == '}' && depth == 0) break;
+				if(p.tokens[0].toktype == '(' || p.tokens[0].toktype == '[') depth++;
+				if(p.tokens[0].toktype == ')' || p.tokens[0].toktype == ']') depth--;
+				p.tokens++;
+			}
+			// we're now left ON the comma or brace
+		}
+
+		if(p.tokens == p.tokens_end) die(&p, "parse error in enum %s: unexpected end of file", enum_name);
+		if(p.tokens[0].toktype == '}') break;
+	}
+
+	return nconsts;
+}
+
+
+static int 
+parse_file_look_for_enums(ParseCtx p, int max_enum_consts, char **enum_const_names)
+{
+	int howmany = 0;
+	while (p.tokens != p.tokens_end) {
+		if (check_token_is_identifier(p.tokens, "enum", 4) )
+		{
+			int nconsts = process_enum(p, max_enum_consts, enum_const_names);
+			enum_const_names += nconsts;
+			max_enum_consts -= nconsts;
+			howmany += nconsts;	
+		}
+		advance_and_skip_braced_blocks(&p);
+	}
+	return howmany;
+}
+
+
 /*
 	==========================================================
-		Lexing
+		Lexing and File IO
 	==========================================================
 */
 
@@ -1858,7 +1940,12 @@ usage(void)
 	"                                                                               \n"
 	"     this flag only lasts until the next file change (i.e. -f)   \n"
 	"                                                                               \n"
-	"-E   for the current file, add all enum constants to the python module.\n"
+	"-E   For the current file, add all enum constants to the python module.\n"
+	"     Note that the emitted wrapper code needs to be able to access the enum constants.\n"
+	"     This means that you should either: use the -D flag and assemble the generated\n"
+	"     wrapper code into the same translation unit as the file you're including enums\n"
+	"     from, or, in the case of a header file, include the header file in the generated\n"
+	"     wrapper code (by prepending an #include directive to the output, for example).\n"
 	"                                                                               \n"
 	"-e   for functions that follow: if they return a string (const char *), the    \n"
 	"     string is to be interpreted as an error message (if not null) and a python  \n"
@@ -1983,6 +2070,10 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 
 	int ntok = 0;
 
+	_Bool enums_added_from_this_file = 0;
+	int num_enum_consts = 0;
+	char *enum_const_names[400] = {0};
+
 	while (*argv) {
 		if (!strcmp(*argv, "-h")) {
 			usage();
@@ -2014,8 +2105,21 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 		}
 
 		if (!strcmp(*argv, "-E")) {
-			args.parse_enums = 1;
 			argv++;
+			if(!args.filename) die2(args, "encountered -E flag before any file was specified");
+			if(enums_added_from_this_file) die2(args, "multiple -E flags for file %s", args.filename);
+			ParseCtx p = {
+				.tokens_first  =  tokens,
+				.tokens        =  tokens,
+				.tokens_end    =  tokens+ntok,
+				.args          =  args,
+				.storage       =  storage,
+			};
+			num_enum_consts += parse_file_look_for_enums(
+				p, 
+				COUNT_ARRAY(enum_const_names)-num_enum_consts, 
+				enum_const_names+num_enum_consts);
+			enums_added_from_this_file = 1;
 			continue;
 		}
 
@@ -2127,10 +2231,10 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 						.storage       =  storage,
 						.args          =  args, }
 					);
-				args.parse_enums = 0;
 				args.disable_pp = 0;
 				args.generic = 0;
 				args.generic_keep_trailing_underscore = 0;
+				enums_added_from_this_file = 0;
 				memset(&args.manual_include, 0, sizeof(args.manual_include));
 				argv++;
 			} else {
@@ -2223,7 +2327,7 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 				char namebuf[500] = {0};	
 				snprintf(namebuf, sizeof(namebuf), "%s%c", *argv, variant_suffixes[i].suffix);
 
-				if (parse_file(p, namebuf, argsyms)) {
+				if (parse_file_look_for_function(p, namebuf, argsyms)) {
 
 					fnames[n_fnames++] = intern_string(args, storage, namebuf, 0) ;
 					if(n_fnames == COUNT_ARRAY(fnames)) 
@@ -2246,14 +2350,20 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 
 		} else {
 
-			if(!parse_file(p, *argv, argsyms)) 
+			if(!parse_file_look_for_function(p, *argv, argsyms)) 
 				die2(args, "didn't find function called '%s' in file '%s'", *argv, p.args.filename);
 		}
 
 		argv++;
 	}
 
-	emit_module(args, n_fnames, fnames, fname_needs_remove_underscore);
+	emit_module(
+		args, 
+		n_fnames, 
+		fnames, 
+		fname_needs_remove_underscore,
+		num_enum_consts,
+		enum_const_names);
 
 	cleanup: // free memory
 	for(unsigned i = 0; i < sizeof(_resources.ptrs)/sizeof(_resources.ptrs[0]); i++) 

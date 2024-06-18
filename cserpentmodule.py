@@ -130,7 +130,7 @@ class CSerpentModule:
                 now = str(int(time.time()))
                 python_mod_name = self.modname + "_" + now
 
-                cserpent_args = ["-m", python_mod_name, "-D", "-f", "-"] + extra_cserpent_flags + functions
+                cserpent_args = ["-m", python_mod_name, "-D", "-f", "-", "-E"] + extra_cserpent_flags + functions
                 cserpent_rtncode, cserpent_stdout, cserpent_stderr = \
                         cserpent_py.run_cserpent(cserpent_args, preprocessed_code)
                 

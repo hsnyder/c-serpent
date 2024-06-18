@@ -231,9 +231,14 @@ Flags:
          in the dispatcher function simply being called sum). This flag disables 
          that functionality, causing trailing underscores to be kept.            
                                                                                    
-         this flag only lasts until the next file change (i.e. -f)                                                                                
-     
-    -E   for the current file, add all enum constants to the python module.
+         this flag only lasts until the next file change (i.e. -f)  
+
+    -E   For the current file, add all enum constants to the python module.
+         Note that the emitted wrapper code needs to be able to access the enum constants.
+         This means that you should either: use the -D flag and assemble the generated
+         wrapper code into the same translation unit as the file you're including enums
+         from, or, in the case of a header file, include the header file in the generated
+         wrapper code (by prepending an #include directive to the output, for example).
 
     -e   for functions that follow: if they return a string (const char *), the    
          string is to be interpreted as an error message (if not null) and a python  
