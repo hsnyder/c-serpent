@@ -30,6 +30,7 @@ enum type_category {
 	T_LONG,
 	T_LLONG,
 	T_FLOAT,
+	T_FLOAT16,
 	T_DOUBLE,
 	T_LDOUBLE,
 	T_STRUCT,
@@ -49,6 +50,7 @@ const char *type_category_strings[] = {
 	[T_LONG] = "long",
 	[T_LLONG] = "long long",
 	[T_FLOAT] = "float",
+	[T_FLOAT16] = "_Float16",
 	[T_DOUBLE] = "double",
 	[T_LDOUBLE] = "long double",
 	[T_STRUCT] = "struct",
@@ -103,6 +105,7 @@ typedef struct
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
+	int float16_support; 
 	int generic;
 	int generic_keep_trailing_underscore;
 	int ndirs;
@@ -543,6 +546,18 @@ modify_type_long(ParseCtx *p, Type *type)
 }
 
 static void 
+modify_type_float16(ParseCtx *p, Type *type)
+{
+	assert(type);
+	if(type->category == T_UNKNOWN) return;
+	if(type->is_unsigned)     die(p, "'_Float16' does not make sense with 'unsigned'");
+	if(type->explicit_signed) die(p, "'_Float16' does not make sense with 'signed'");
+
+	if(type->category == T_UNINITIALIZED) type->category = T_FLOAT16;
+	else die(p, "'_Float16' does not make sense with '%s'", type_category_strings[type->category]);
+}
+
+static void 
 modify_type_float(ParseCtx *p, Type *type)
 {
 	assert(type);
@@ -622,7 +637,7 @@ compare_types_equal(Type a, Type b, int compare_pointer, int compare_const, int 
 {
 	if(a.category != b.category) return 0;
 
-	if(a.category == T_FLOAT || a.category == T_DOUBLE || a.category == T_LDOUBLE) {
+	if(a.category == T_FLOAT || a.category == T_FLOAT16 || a.category == T_DOUBLE || a.category == T_LDOUBLE) {
 
 		if  (a.is_complex   != b.is_complex)     return 0;
 		if  (a.is_imaginary != b.is_imaginary)  return 0;
@@ -737,45 +752,57 @@ static void
 emit_preamble(CSerpentArgs args)
 {
 	(void) args;
-	static const char * preamble = 
-	"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
-	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
-	"#include <Python.h> \n"
-	"#include <numpy/arrayobject.h> \n"
-	"#ifdef __cplusplus \n"
-	"template<typename T> struct CSERPENT_C2NPY_struct; \n"
-	"template<> struct CSERPENT_C2NPY_struct<signed char> { static constexpr int value = NPY_BYTE; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<short> { static constexpr int value = NPY_SHORT; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<int> { static constexpr int value = NPY_INT; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<long> { static constexpr int value = NPY_LONG; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<long long> { static constexpr int value = NPY_LONGLONG; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<unsigned char> { static constexpr int value = NPY_UBYTE; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<unsigned short> { static constexpr int value = NPY_USHORT; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<unsigned int> { static constexpr int value = NPY_UINT; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<unsigned long> { static constexpr int value = NPY_ULONG; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<unsigned long long> { static constexpr int value = NPY_ULONGLONG; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<float> { static constexpr int value = NPY_FLOAT; }; \n"
-	"template<> struct CSERPENT_C2NPY_struct<double> { static constexpr int value = NPY_DOUBLE; }; \n"
-	"#define C2NPY(type) CSERPENT_C2NPY_struct<type>::value \n"
-	"#else \n"
-	"#define C2NPY(type) _Generic((type){0},    \\\n"
-	"	signed char:        NPY_BYTE,      \\\n"
-	"	short:              NPY_SHORT,     \\\n"
-	"	int:                NPY_INT,       \\\n"
-	"	long:               NPY_LONG,      \\\n"
-	"	long long:          NPY_LONGLONG,  \\\n"
-	"	unsigned char:      NPY_UBYTE,     \\\n"
-	"	unsigned short:     NPY_USHORT,    \\\n"
-	"	unsigned int:       NPY_UINT,      \\\n"
-	"	unsigned long:      NPY_ULONG,     \\\n"
-	"	unsigned long long: NPY_ULONGLONG, \\\n"
-	"	float:              NPY_FLOAT,     \\\n"
-	"	double:             NPY_DOUBLE,    \\\n"
-	"	_Complex float:     NPY_CFLOAT,    \\\n"
-	"	_Complex double:    NPY_CDOUBLE    \\\n"
-	"	)\n"
-	"#endif \n";
-	fprintf(args.ostream, "%s\n", preamble);
+	char * f16_cplusplus = 
+		args.float16_support ? 
+			"template<> struct CSERPENT_C2NPY_struct<_Float16> { static constexpr int value = NPY_FLOAT16; };" :
+			"";
+	char * f16_c = 
+		args.float16_support ? 
+			"_Float16: NPY_FLOAT16," :
+			"";
+	fprintf(args.ostream, 
+		"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
+		"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
+		"#include <Python.h> \n"
+		"#include <numpy/arrayobject.h> \n"
+		"#ifdef __cplusplus \n"
+		"template<typename T> struct CSERPENT_C2NPY_struct; \n"
+		"template<> struct CSERPENT_C2NPY_struct<signed char> { static constexpr int value = NPY_BYTE; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<short> { static constexpr int value = NPY_SHORT; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<int> { static constexpr int value = NPY_INT; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<long> { static constexpr int value = NPY_LONG; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<long long> { static constexpr int value = NPY_LONGLONG; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<unsigned char> { static constexpr int value = NPY_UBYTE; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<unsigned short> { static constexpr int value = NPY_USHORT; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<unsigned int> { static constexpr int value = NPY_UINT; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<unsigned long> { static constexpr int value = NPY_ULONG; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<unsigned long long> { static constexpr int value = NPY_ULONGLONG; }; \n"
+		"template<> struct CSERPENT_C2NPY_struct<float> { static constexpr int value = NPY_FLOAT; }; \n"
+		"%s\n"
+		"template<> struct CSERPENT_C2NPY_struct<double> { static constexpr int value = NPY_DOUBLE; }; \n"
+		"#define C2NPY(type) CSERPENT_C2NPY_struct<type>::value \n"
+		"#else \n"
+		"#define C2NPY(type) _Generic((type){0},    \\\n"
+		"	signed char:        NPY_BYTE,      \\\n"
+		"	short:              NPY_SHORT,     \\\n"
+		"	int:                NPY_INT,       \\\n"
+		"	long:               NPY_LONG,      \\\n"
+		"	long long:          NPY_LONGLONG,  \\\n"
+		"	unsigned char:      NPY_UBYTE,     \\\n"
+		"	unsigned short:     NPY_USHORT,    \\\n"
+		"	unsigned int:       NPY_UINT,      \\\n"
+		"	unsigned long:      NPY_ULONG,     \\\n"
+		"	unsigned long long: NPY_ULONGLONG, \\\n"
+		"	float:              NPY_FLOAT,     \\\n"
+		"       %s\\\n"
+		"	double:             NPY_DOUBLE,    \\\n"
+		"	_Complex float:     NPY_CFLOAT,    \\\n"
+		"	_Complex double:    NPY_CDOUBLE    \\\n"
+		"	)\n"
+		"#endif \n\n",
+
+		f16_cplusplus, 
+		f16_c);	
 }
 
 static int 
@@ -1324,6 +1351,7 @@ supported_type(ParseCtx *p, Type *t)
 		if (eat_identifier(p, "int"))      { modify_type_int(p,t); return 1; }
 		if (eat_identifier(p, "long"))     { modify_type_long(p,t); return 1; }
 		if (eat_identifier(p, "float"))    { modify_type_float(p,t); return 1; }
+		if (eat_identifier(p, "_Float16")) { modify_type_float16(p,t); return 1; }
 		if (eat_identifier(p, "double"))   { modify_type_double(p,t); return 1; }
 		if (eat_identifier(p, "signed"))   { modify_type_signed(p,t); return 1; }
 		if (eat_identifier(p, "unsigned")) { modify_type_unsigned(p,t); return 1; }
@@ -1913,6 +1941,8 @@ usage(void)
 	"                                                                               \n"
 	"-h   print help message and exit    \n"
 	"  \n"
+	"-f16 enable support for _Float16 (requires compiler support)    \n"
+	"  \n"
 	"-m   the following argument is the name of the module to be built   \n"
 	"     only one module per c-serpent invocation is allowed.  \n"
 	"                                                                               \n"
@@ -2011,10 +2041,12 @@ usage(void)
         "       uint64          L \n"
         "        \n"
         "       float           f \n"
+        "       _Float16        h \n"
         "       double          d \n"
         "        \n"
-        "       complex float   F \n"
-        "       complex double  D \n"
+        "       complex float    F \n"
+        "       complex _Float16 H \n"
+        "       complex double   D \n"
 	"                                                                               \n"
 	"     You do not need to supply all of these variants; c-serpent will support   \n"
 	"     whichever variants it finds. \n"
@@ -2103,6 +2135,12 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 
 		if (!strcmp(*argv, "-v")) {
 			args.verbose = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-f16")) {
+			args.float16_support = 1;
 			argv++;
 			continue;
 		}
@@ -2333,11 +2371,13 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 				{get_symbol_or_die(args, storage, "uint16_t")->type, 'S'},
 				{get_symbol_or_die(args, storage, "uint8_t")->type,  'B'},
 
-				{(Type){.category=T_DOUBLE}, 'd'},
-				{(Type){.category=T_FLOAT},  'f'},
+				{(Type){.category=T_DOUBLE},  'd'},
+				{(Type){.category=T_FLOAT16}, 'h'},
+				{(Type){.category=T_FLOAT},   'f'},
 
-				{(Type){.category=T_DOUBLE, .is_complex=1}, 'D'},
-				{(Type){.category=T_FLOAT, .is_complex=1},  'F'},
+				{(Type){.category=T_DOUBLE, .is_complex=1},  'D'},
+				{(Type){.category=T_FLOAT16, .is_complex=1}, 'H'},
+				{(Type){.category=T_FLOAT, .is_complex=1},   'F'},
 			};
 
 
