@@ -742,6 +742,22 @@ emit_preamble(CSerpentArgs args)
 	"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
 	"#include <Python.h> \n"
 	"#include <numpy/arrayobject.h> \n"
+	"#ifdef __cplusplus \n"
+	"template<typename T> struct CSERPENT_C2NPY_struct; \n"
+	"template<> struct CSERPENT_C2NPY_struct<signed char> { static constexpr int value = NPY_BYTE; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<short> { static constexpr int value = NPY_SHORT; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<int> { static constexpr int value = NPY_INT; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<long> { static constexpr int value = NPY_LONG; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<long long> { static constexpr int value = NPY_LONGLONG; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<unsigned char> { static constexpr int value = NPY_UBYTE; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<unsigned short> { static constexpr int value = NPY_USHORT; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<unsigned int> { static constexpr int value = NPY_UINT; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<unsigned long> { static constexpr int value = NPY_ULONG; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<unsigned long long> { static constexpr int value = NPY_ULONGLONG; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<float> { static constexpr int value = NPY_FLOAT; }; \n"
+	"template<> struct CSERPENT_C2NPY_struct<double> { static constexpr int value = NPY_DOUBLE; }; \n"
+	"#define C2NPY(type) CSERPENT_C2NPY_struct<type>::value \n"
+	"#else \n"
 	"#define C2NPY(type) _Generic((type){0},    \\\n"
 	"	signed char:        NPY_BYTE,      \\\n"
 	"	short:              NPY_SHORT,     \\\n"
@@ -757,7 +773,8 @@ emit_preamble(CSerpentArgs args)
 	"	double:             NPY_DOUBLE,    \\\n"
 	"	_Complex float:     NPY_CFLOAT,    \\\n"
 	"	_Complex double:    NPY_CDOUBLE    \\\n"
-	"	)\n";
+	"	)\n"
+	"#endif \n";
 	fprintf(args.ostream, "%s\n", preamble);
 }
 
@@ -853,10 +870,14 @@ emit_call(const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[])
 	for(int i = 0; i < n_fnargs; i++)
 	{
 		char *sep  =  i ? ", " : "";
-		if (is_array(fnargs[i].type))
-			fprintf(args.ostream, "%s%s_data", sep, fnargs[i].name);
-		else 
+		if (is_array(fnargs[i].type)) {
+			char buffer[200] = {0};
+			if(200 <= repr_type(200, buffer, fnargs[i].type)) 
+				die2(args, "bug: buffer overflow / type name too long");
+			fprintf(args.ostream, "%s(%s)%s_data", sep, buffer, fnargs[i].name);
+		} else {
 			fprintf(args.ostream, "%s%s", sep, fnargs[i].name);
+		}
 	}
 
 	fprintf(args.ostream, ");\n");
@@ -918,7 +939,7 @@ emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], 
 		// keyword name list
 		fprintf(args.ostream, "    static char *kwlist[] = {");
 	        for(int i = 0; i < n_fnargs; i++)
-			fprintf(args.ostream, "\n        \"%s\",", fnargs[i].name);
+			fprintf(args.ostream, "\n        (char*)\"%s\",", fnargs[i].name);
 		fprintf(args.ostream, "0};\n");
 
 		// declare a C variable for each argument
@@ -1144,7 +1165,7 @@ emit_dispatch_wrapper (
 	// keyword name list
 	fprintf(args.ostream, "    static char *kwlist[] = {");
 	for(int i = 0; i < n_args; i++)
-		fprintf(args.ostream, "\n        \"%s\",", fnargs[i].name);
+		fprintf(args.ostream, "\n        (char*)\"%s\",", fnargs[i].name);
 	fprintf(args.ostream, "0};\n");
 
 	// extract args
