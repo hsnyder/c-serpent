@@ -100,12 +100,13 @@ typedef struct { // lexer token
 typedef struct
 {
 	int verbose;
+	int float16_support; 
 	int disable_declarations;
+	int enable_addresses_for_arrays;
 	const char * modulename;
 	const char * filename;
 	const char * preprocessor;
 	int disable_pp;
-	int float16_support; 
 	int generic;
 	int generic_keep_trailing_underscore;
 	int ndirs;
@@ -764,6 +765,7 @@ emit_preamble(CSerpentArgs args)
 		"#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION \n"
 		"#define PY_ARRAY_UNIQUE_SYMBOL SHARED_ARRAY_ARRAY_API \n"
 		"#include <Python.h> \n"
+		"#include <stddef.h> \n"
 		"#include <numpy/arrayobject.h> \n"
 		"#ifdef __cplusplus \n"
 		"template<typename T> struct CSERPENT_C2NPY_struct; \n"
@@ -1049,21 +1051,28 @@ emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], 
 
 				// emit array type check
 				fprintf(args.ostream, "    if (%s_obj != Py_None) { \n", arg.name);
+				if(args.enable_addresses_for_arrays) {
+					fprintf(args.ostream, "        if (PyLong_Check(%s_obj)) { \n", arg.name);
+					fprintf(args.ostream, "            intptr_t value = PyLong_AsLongLong(%s_obj);\n", arg.name);
+					fprintf(args.ostream, "            if(value==-1 && PyErr_Occurred()) return 0;\n");
+					fprintf(args.ostream, "            %s_data = (void*)value;\n", arg.name);
+					fprintf(args.ostream, "        } else \n");
+				}
 				fprintf(args.ostream, "        if (!PyArray_Check(%s_obj)) { \n", arg.name);
 				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
 				fprintf(args.ostream, "            return 0; \n");
 				fprintf(args.ostream, "        } \n");
-				fprintf(args.ostream, "        if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
+				fprintf(args.ostream, "        else if (PyArray_TYPE((PyArrayObject*)%s_obj) != C2NPY(%s)) {\n", arg.name, buf);
 				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Invalid array data type for argument '%s' (expected %s)\");\n", arg.name, buf);
 			        fprintf(args.ostream, "            return 0; \n");
 				fprintf(args.ostream, "        } \n");
 
 				// emit array contiguity check
-				fprintf(args.ostream, "        if(!PyArray_ISCARRAY((PyArrayObject*)%s_obj)) {\n", arg.name);
+				fprintf(args.ostream, "        else if(!PyArray_ISCARRAY((PyArrayObject*)%s_obj)) {\n", arg.name);
 				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Argument '%s' is not C-contiguous\");\n", arg.name);
 			        fprintf(args.ostream, "            return 0;\n");
 				fprintf(args.ostream, "        }\n");
-				fprintf(args.ostream, "        %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
+				fprintf(args.ostream, "        else %s_data = PyArray_DATA((PyArrayObject*)%s_obj); \n", arg.name, arg.name);
 				fprintf(args.ostream, "    }\n");
 			}
 		}
@@ -1943,12 +1952,15 @@ usage(void)
 	"  \n"
 	"-f16 enable support for _Float16 (requires compiler support)    \n"
 	"  \n"
+	"-a   allow python integers, representing raw addresses, to be passed    \n"
+	"     where numpy arrays are otherwise expected.  \n"
+	"                                                                               \n"
+	"-v   verbose (prints a list of typedefs that were parsed, for debugging).  \n"
+	"                                                                               \n"
 	"-m   the following argument is the name of the module to be built   \n"
 	"     only one module per c-serpent invocation is allowed.  \n"
 	"                                                                               \n"
 	"-f   the following argument is a filename.  \n"
-	"                                                                               \n"
-	"-v   verbose (prints a list of typedefs that were parsed, for debugging).  \n"
 	"                                                                               \n"
 	"-D   disable including declarations for the functions to be wrapped in the   \n"
 	"     generated wrapper file. This might be used to facilitate amalgamation   \n"
@@ -2131,6 +2143,12 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 		if (!strcmp(*argv, "-h")) {
 			usage();
 			return 0;
+		}
+
+		if (!strcmp(*argv, "-a")) {
+			args.enable_addresses_for_arrays = 1;
+			argv++;
+			continue;
 		}
 
 		if (!strcmp(*argv, "-v")) {
