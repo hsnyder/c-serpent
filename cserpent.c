@@ -103,6 +103,7 @@ typedef struct
 	int float16_support; 
 	int disable_declarations;
 	int enable_addresses_for_arrays;
+	int enable_bytes_for_arrays;
 	const char * modulename;
 	const char * filename;
 	const char * preprocessor;
@@ -1058,6 +1059,13 @@ emit_wrapper (const char *fn, CSerpentArgs args, int n_fnargs, Symbol fnargs[], 
 					fprintf(args.ostream, "            %s_data = (void*)value;\n", arg.name);
 					fprintf(args.ostream, "        } else \n");
 				}
+				if(args.enable_bytes_for_arrays) {
+					fprintf(args.ostream, "        if (PyBytes_Check(%s_obj)) { \n", arg.name);
+					fprintf(args.ostream, "            char *value = PyBytes_AsString(%s_obj);\n", arg.name);
+					fprintf(args.ostream, "            if(value==0) return 0;\n");
+					fprintf(args.ostream, "            %s_data = (void*)value;\n", arg.name);
+					fprintf(args.ostream, "        } else \n");
+				}
 				fprintf(args.ostream, "        if (!PyArray_Check(%s_obj)) { \n", arg.name);
 				fprintf(args.ostream, "            PyErr_SetString(PyExc_ValueError, \"Argument '%s' must be a numpy array, or None\"); \n", arg.name);
 				fprintf(args.ostream, "            return 0; \n");
@@ -1955,6 +1963,9 @@ usage(void)
 	"-a   allow python integers, representing raw addresses, to be passed    \n"
 	"     where numpy arrays are otherwise expected.  \n"
 	"                                                                               \n"
+	"-b   allow python bytes objects  to be passed where numpy arrays are           \n"
+	"     otherwise expected.  \n"
+	"                                                                               \n"
 	"-v   verbose (prints a list of typedefs that were parsed, for debugging).  \n"
 	"                                                                               \n"
 	"-m   the following argument is the name of the module to be built   \n"
@@ -2147,6 +2158,12 @@ cserpent_main (char *argv[], FILE *in_stream, FILE *out_stream, FILE *err_stream
 
 		if (!strcmp(*argv, "-a")) {
 			args.enable_addresses_for_arrays = 1;
+			argv++;
+			continue;
+		}
+
+		if (!strcmp(*argv, "-b")) {
+			args.enable_bytes_for_arrays = 1;
 			argv++;
 			continue;
 		}

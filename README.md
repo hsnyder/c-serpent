@@ -181,6 +181,14 @@ environment variable (the former takes precedence if both are supplied).
 Flags:   
                                                                                
     -h   print help message and exit    
+
+    -f16 enable support for _Float16 (requires compiler support)
+
+    -a   allow python integers, representing raw address, to be passed 
+         where numpy arrays are otherwise expected.
+
+    -b   allow bytes objects to be bassed where numpy arrays are
+         otherwise expected.
       
     -m   the following argument is the name of the module to be built   
          only one module per c-serpent invocation is allowed.  
